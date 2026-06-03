@@ -6,15 +6,9 @@
   <title>Geometric Dash – Flying Wave Challenge</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      background: #000d1a;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      min-height: 100vh;
-      overflow: hidden;
-      font-family: 'Segoe UI', sans-serif;
-    }
+    body { background: #000; display: flex; justify-content: center;
+           align-items: center; min-height: 100vh; overflow: hidden;
+           font-family: 'Segoe UI', sans-serif; }
     canvas { display: block; cursor: pointer; touch-action: none; }
   </style>
 </head>
@@ -28,48 +22,45 @@ const BASE_W = 800, BASE_H = 450;
 let scale = 1;
 
 function resize() {
-  const s = Math.min(window.innerWidth / BASE_W, window.innerHeight / BASE_H);
-  scale = s;
-  canvas.width  = BASE_W * s;
-  canvas.height = BASE_H * s;
-  ctx.setTransform(s, 0, 0, s, 0, 0);
+  scale = Math.min(window.innerWidth / BASE_W, window.innerHeight / BASE_H);
+  canvas.width  = Math.floor(BASE_W * scale);
+  canvas.height = Math.floor(BASE_H * scale);
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
   buildBgCache();
 }
 window.addEventListener('resize', resize);
 
 // ── Persistence ───────────────────────────────────────────────────────────────
-const save = (k,v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch(_){} };
-const load = (k,d) => { try { const v=localStorage.getItem(k); return v!==null?JSON.parse(v):d; } catch(_){ return d; } };
+const sv = (k,v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch(_){} };
+const ld = (k,d) => { try { const v=localStorage.getItem(k); return v!==null?JSON.parse(v):d; } catch(_){ return d; } };
 
-let highScore     = load('wHS2', 0);
-let totalCoins    = load('wCoins2', 0);
-let unlockedSkins = load('wSkins2', [0]);
-let selectedSkin  = load('wSkin2', 0);
-let achievements  = load('wAch2', {});
+let highScore     = ld('wHS3', 0);
+let totalCoins    = ld('wCoins3', 0);
+let unlockedSkins = ld('wSkins3', [0]);
+let selectedSkin  = ld('wSkin3', 0);
+let achievements  = ld('wAch3', {});
 
 // ── Skins ─────────────────────────────────────────────────────────────────────
 const SKINS = [
-  { name:'Classic', cost:0,   color:'#00ffcc', glow:'#00ffcc' },
-  { name:'Inferno', cost:50,  color:'#ff5500', glow:'#ff8800' },
-  { name:'Venom',   cost:100, color:'#44ff00', glow:'#88ff44' },
-  { name:'Royal',   cost:150, color:'#cc44ff', glow:'#ee88ff' },
-  { name:'Gold',    cost:300, color:'#ffd700', glow:'#ffe566' },
+  { name:'Classic', cost:0,   color:'#00ffcc', glow:'#00ffcc', trail:'#00ccaa' },
+  { name:'Inferno', cost:50,  color:'#ff5500', glow:'#ff8800', trail:'#cc3300' },
+  { name:'Venom',   cost:100, color:'#44ff00', glow:'#88ff44', trail:'#22aa00' },
+  { name:'Royal',   cost:150, color:'#cc44ff', glow:'#ee88ff', trail:'#8800cc' },
+  { name:'Gold',    cost:300, color:'#ffd700', glow:'#ffe566', trail:'#cc9900' },
 ];
 
 // ── Achievements ──────────────────────────────────────────────────────────────
 const ACH = [
-  { id:'s100',  label:'Novice',      desc:'Score 100',    check: g => g.score>=100 },
-  { id:'s500',  label:'Daredevil',   desc:'Score 500',    check: g => g.score>=500 },
-  { id:'s1000', label:'Wave Master', desc:'Score 1000',   check: g => g.score>=1000 },
-  { id:'c10',   label:'Collector',   desc:'10 coins',     check: ()=> totalCoins>=10 },
-  { id:'c50',   label:'Hoarder',     desc:'50 coins',     check: ()=> totalCoins>=50 },
+  { id:'s100',  label:'Novice',      desc:'Reach score 100',  check: g => g.score>=100 },
+  { id:'s500',  label:'Daredevil',   desc:'Reach score 500',  check: g => g.score>=500 },
+  { id:'s1000', label:'Wave Master', desc:'Reach score 1000', check: g => g.score>=1000 },
+  { id:'c10',   label:'Collector',   desc:'Collect 10 coins', check: ()=> totalCoins>=10 },
+  { id:'c50',   label:'Hoarder',     desc:'Collect 50 coins', check: ()=> totalCoins>=50 },
 ];
 function checkAch(game) {
   for (const a of ACH) {
     if (!achievements[a.id] && a.check(game)) {
-      achievements[a.id] = true;
-      save('wAch2', achievements);
-      return a;
+      achievements[a.id] = true; sv('wAch3', achievements); return a;
     }
   }
   return null;
@@ -78,8 +69,7 @@ function checkAch(game) {
 // ── Audio ─────────────────────────────────────────────────────────────────────
 let AC = null;
 const ensureAC = () => { if (!AC) AC = new (window.AudioContext||window.webkitAudioContext)(); };
-
-function beep(freq, type, dur, vol=0.15) {
+function beep(freq, type, dur, vol=0.12) {
   ensureAC();
   const o=AC.createOscillator(), g=AC.createGain();
   o.connect(g); g.connect(AC.destination);
@@ -101,11 +91,9 @@ function playExplosion() {
   g.gain.exponentialRampToValueAtTime(0.001,AC.currentTime+0.25);
   s.start();
 }
-
 let musicInterval=null;
 function startMusic() {
-  ensureAC();
-  if (musicInterval) return;
+  ensureAC(); if (musicInterval) return;
   const notes=[261,293,329,349,392,440,493,523];
   const pat=[0,2,4,7,4,2,0,2,4,5,7,5,4,5,7,9];
   let step=0;
@@ -115,105 +103,264 @@ function startMusic() {
     o.type='sawtooth'; o.frequency.value=notes[pat[step%pat.length]%notes.length]*0.5;
     g.gain.setValueAtTime(0.05,AC.currentTime);
     g.gain.exponentialRampToValueAtTime(0.001,AC.currentTime+0.18);
-    o.start(); o.stop(AC.currentTime+0.18);
-    step++;
+    o.start(); o.stop(AC.currentTime+0.18); step++;
   }, 187);
 }
 function stopMusic() { if(musicInterval){ clearInterval(musicInterval); musicInterval=null; } }
 
 // ── Background tile cache ─────────────────────────────────────────────────────
-// Pre-render a teal brick tile to avoid per-frame shadow calls
-const TILE = 40;
+const TILE = 44;
 let bgCache = null;
-
 function buildBgCache() {
   const off = document.createElement('canvas');
   off.width = TILE*4; off.height = TILE*2;
   const c = off.getContext('2d');
-
-  // Draw 8 brick tiles in a 4x2 pattern with slight variation
-  for (let row=0; row<2; row++) {
-    for (let col=0; col<4; col++) {
-      const x = col*TILE, y = row*TILE;
-      // brick face
-      c.fillStyle = row%2===0 ? '#0a2a3a' : '#0c3040';
-      c.fillRect(x+1,y+1,TILE-2,TILE-2);
-      // subtle inner highlight
-      c.fillStyle = 'rgba(0,180,220,0.07)';
-      c.fillRect(x+3,y+3,TILE-6,TILE/2-3);
-      // border
-      c.strokeStyle = '#0d4a66';
-      c.lineWidth = 1.5;
-      c.strokeRect(x+0.75,y+0.75,TILE-1.5,TILE-1.5);
-    }
+  for (let row=0;row<2;row++) for (let col=0;col<4;col++) {
+    const x=col*TILE, y=row*TILE;
+    // Alternating teal brick shades
+    c.fillStyle = (row+col)%2===0 ? '#082830' : '#0a3040';
+    c.fillRect(x,y,TILE,TILE);
+    // Inner bevel highlight
+    c.fillStyle = 'rgba(0,200,220,0.06)';
+    c.fillRect(x+3,y+3,TILE-6,TILE/2-4);
+    // border
+    c.strokeStyle = '#0d5570';
+    c.lineWidth = 1.2;
+    c.strokeRect(x+0.6,y+0.6,TILE-1.2,TILE-1.2);
   }
   bgCache = off;
 }
 
 function drawBackground(scrollX) {
   if (!bgCache) return;
-  const ox = -((scrollX*0.4) % (TILE*4));
-  const oy = 0;
-  const pw = bgCache.width, ph = bgCache.height;
-  for (let x=ox; x<BASE_W+pw; x+=pw) {
-    for (let y=oy; y<BASE_H+ph; y+=ph) {
+  const ox = -((scrollX*0.35) % (TILE*4));
+  for (let x=ox; x<BASE_W+bgCache.width; x+=bgCache.width)
+    for (let y=0; y<BASE_H+bgCache.height; y+=bgCache.height)
       ctx.drawImage(bgCache, x, y);
-    }
-  }
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const WALL_T   = 36;     // wall thickness top & bottom
-const PLAY_TOP = WALL_T;
-const PLAY_BOT = BASE_H - WALL_T;
-const PLAY_H   = PLAY_BOT - PLAY_TOP;
-const PLAYER_X = 120;
-const WAVE_SPD = 4.5;    // diagonal speed (px/frame) — same up and down
-const SCROLL   = 5.0;
-const SPIKE_W  = 32;
-const SPIKE_H  = 34;
-const SAFE_DIST = 420;   // no spikes until this far from start
+const PLAY_TOP  = 0;
+const PLAY_BOT  = BASE_H;
+const PLAY_H    = PLAY_BOT - PLAY_TOP;
+const PLAYER_X  = 130;
+const WAVE_SPD  = 4.2;   // diagonal travel speed (px/frame)
+const PLAYER_R  = 9;     // collision radius
 
-// ── Difficulty configs ────────────────────────────────────────────────────────
+// Corridor constraints
+const MIN_HALF_GAP  = 28;   // absolute minimum half-gap (56px total, player is ~18px)
+const START_HALF_GAP= 110;  // starting half-gap
+const WALL_MIN_Y    = 14;   // top wall can reach this close to screen top
+const WALL_MAX_Y    = BASE_H - 14; // bottom wall
+
+// ── Difficulty ────────────────────────────────────────────────────────────────
 const DIFFS = {
-  easy:   { scroll:3.8, minGap:200, maxGap:320, coinRate:0.25 },
-  normal: { scroll:5.0, minGap:160, maxGap:260, coinRate:0.15 },
-  hard:   { scroll:6.5, minGap:120, maxGap:190, coinRate:0.10 },
+  easy:   { scroll:3.5, gapStart:130, gapFloor:55,  coinRate:0.30 },
+  normal: { scroll:5.0, gapStart:110, gapFloor:38,  coinRate:0.18 },
+  hard:   { scroll:6.5, gapStart:90,  gapFloor:28,  coinRate:0.10 },
 };
 let difficulty = 'normal';
 
+// ── Corridor node system ──────────────────────────────────────────────────────
+// Each node: { x, topY, botY }
+// topY = inner edge of top wall (wall goes from PLAY_TOP to topY)
+// botY = inner edge of bottom wall (wall goes from botY to PLAY_BOT)
+// Gap = region from topY to botY. Player must stay within.
+
+function lerp(a, b, t) { return a + (b-a)*t; }
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+// Sample corridor at world-x (returns {topY, botY})
+function sampleCorridor(nodes, wx) {
+  if (nodes.length === 0) return { topY: PLAY_TOP+50, botY: PLAY_BOT-50 };
+  if (wx <= nodes[0].x)   return { topY: nodes[0].topY, botY: nodes[0].botY };
+  if (wx >= nodes[nodes.length-1].x) {
+    const n = nodes[nodes.length-1];
+    return { topY: n.topY, botY: n.botY };
+  }
+  // Binary search for segment
+  let lo=0, hi=nodes.length-1;
+  while (hi-lo > 1) {
+    const mid = (lo+hi)>>1;
+    if (nodes[mid].x <= wx) lo=mid; else hi=mid;
+  }
+  const n0=nodes[lo], n1=nodes[hi];
+  const t=(wx-n0.x)/(n1.x-n0.x);
+  // Smooth step for nicer corridors
+  const s=t*t*(3-2*t);
+  return {
+    topY: lerp(n0.topY, n1.topY, s),
+    botY: lerp(n0.botY, n1.botY, s),
+  };
+}
+
+// ── Corridor generator ────────────────────────────────────────────────────────
+// Returns array of nodes representing one "section" of corridor
+// sections have types for variety and difficulty progression
+
+function makeSection(startX, startTopY, startBotY, score) {
+  const cfg = DIFFS[difficulty];
+  // How narrow can the gap be at this score level?
+  const progress = Math.min(1, score / 800);
+  const minHG = clamp(
+    lerp(cfg.gapStart * 0.5, cfg.gapFloor, progress),
+    cfg.gapFloor, cfg.gapStart
+  );
+  const maxHG = clamp(
+    lerp(cfg.gapStart, cfg.gapStart * 0.6, progress),
+    minHG + 20, cfg.gapStart
+  );
+
+  const currentCY = (startTopY + startBotY) / 2;
+  const currentHG = (startBotY - startTopY) / 2;
+
+  // Pick section type based on score / randomness
+  const rand = Math.random();
+  let type;
+  if (score < 50)        type = 'flat';         // very beginning: flat wide
+  else if (score < 120)  type = rand<0.5?'rise':'fall';
+  else if (rand < 0.20)  type = 'flat';
+  else if (rand < 0.42)  type = 'rise';
+  else if (rand < 0.64)  type = 'fall';
+  else if (rand < 0.78)  type = 'zigzag';
+  else if (rand < 0.90)  type = 'narrow';
+  else                   type = 'recovery';
+
+  // Section horizontal length (how many px wide)
+  const secLen = 120 + Math.random() * 160;
+  const nodeCount = Math.max(2, Math.floor(secLen / 30));
+  const nodes = [];
+
+  // Helper to build nodes from a center-Y path + half-gap path
+  function buildFromPath(cyPath, hgPath) {
+    for (let i=0; i<nodeCount; i++) {
+      const t = nodeCount<=1 ? 0 : i/(nodeCount-1);
+      const cy = clamp(cyPath(t), WALL_MIN_Y + 40, WALL_MAX_Y - 40);
+      const hg = clamp(hgPath(t), minHG, maxHG);
+      const topY = clamp(cy - hg, WALL_MIN_Y, WALL_MAX_Y - hg*2);
+      const botY = topY + hg*2;
+      nodes.push({ x: startX + t * secLen, topY, botY });
+    }
+  }
+
+  // Choose a reachable target center based on wave speed & section length
+  // Max vertical travel in secLen pixels at scroll speed:
+  const scrollSpd = cfg.scroll + score * 0.0015;
+  const framesInSection = secLen / scrollSpd;
+  const maxVertical = WAVE_SPD * framesInSection * 0.75; // 75% of max to be fair
+
+  switch(type) {
+    case 'flat': {
+      // Keep center constant, slightly vary gap
+      const targetHG = lerp(currentHG, (minHG+maxHG)*0.5, 0.4);
+      buildFromPath(
+        () => currentCY,
+        t => lerp(currentHG, targetHG, t)
+      );
+      break;
+    }
+    case 'rise': {
+      // Corridor center moves upward — player needs to hold
+      const delta = Math.min(maxVertical * 0.55, BASE_H * 0.28);
+      const targetCY = clamp(currentCY - delta, WALL_MIN_Y + minHG + 10, WALL_MAX_Y - minHG - 10);
+      const targetHG = lerp(currentHG, (minHG+maxHG)*0.55, 0.5);
+      buildFromPath(t => lerp(currentCY, targetCY, t), t => lerp(currentHG, targetHG, t));
+      break;
+    }
+    case 'fall': {
+      const delta = Math.min(maxVertical * 0.55, BASE_H * 0.28);
+      const targetCY = clamp(currentCY + delta, WALL_MIN_Y + minHG + 10, WALL_MAX_Y - minHG - 10);
+      const targetHG = lerp(currentHG, (minHG+maxHG)*0.55, 0.5);
+      buildFromPath(t => lerp(currentCY, targetCY, t), t => lerp(currentHG, targetHG, t));
+      break;
+    }
+    case 'zigzag': {
+      // Center oscillates — requires alternating inputs
+      const amp = Math.min(maxVertical * 0.4, BASE_H * 0.2);
+      const freq = 1.5 + Math.random();
+      buildFromPath(
+        t => clamp(currentCY + Math.sin(t * Math.PI * freq) * amp,
+                   WALL_MIN_Y + minHG + 8, WALL_MAX_Y - minHG - 8),
+        t => lerp(currentHG, (minHG+maxHG)*0.55, Math.sin(t*Math.PI))
+      );
+      break;
+    }
+    case 'narrow': {
+      // Gap tightens then widens — precision moment
+      const tightHG = clamp(minHG + (maxHG-minHG)*0.15, minHG, maxHG*0.4);
+      buildFromPath(
+        () => currentCY,
+        t => {
+          const squeeze = Math.sin(t * Math.PI); // peaks at middle
+          return lerp(currentHG, tightHG, squeeze);
+        }
+      );
+      break;
+    }
+    case 'recovery': {
+      // Wide gap, center moves toward middle — breathing room
+      const midCY = PLAY_H / 2;
+      const recovHG = clamp(maxHG * 0.85, minHG, maxHG);
+      buildFromPath(
+        t => lerp(currentCY, midCY, t*0.6),
+        t => lerp(currentHG, recovHG, t)
+      );
+      break;
+    }
+    default: {
+      nodes.push({ x: startX, topY: startTopY, botY: startBotY });
+      nodes.push({ x: startX + secLen, topY: startTopY, botY: startBotY });
+    }
+  }
+
+  // Validate: ensure every node is physically sane
+  for (const n of nodes) {
+    n.topY = clamp(n.topY, WALL_MIN_Y, WALL_MAX_Y - MIN_HALF_GAP*2);
+    n.botY = clamp(n.botY, n.topY + MIN_HALF_GAP*2, WALL_MAX_Y);
+    // Ensure gap is actually big enough
+    if (n.botY - n.topY < MIN_HALF_GAP*2) {
+      const cy = (n.topY + n.botY) / 2;
+      n.topY = cy - MIN_HALF_GAP;
+      n.botY = cy + MIN_HALF_GAP;
+    }
+  }
+
+  return nodes;
+}
+
+// ── Coin placement along corridor ─────────────────────────────────────────────
+function makeCoin(nodes, score) {
+  const cfg = DIFFS[difficulty];
+  if (Math.random() > cfg.coinRate || nodes.length < 2) return null;
+  const n = nodes[Math.floor(nodes.length/2)];
+  const cy = (n.topY + n.botY) / 2;
+  return { x: n.x, y: cy, done: false };
+}
+
 // ── Particles ─────────────────────────────────────────────────────────────────
 class Particle {
-  constructor(x,y,color,vx,vy,life,size) {
-    Object.assign(this,{x,y,color,vx,vy,life,maxLife:life,size});
-  }
-  update(){ this.x+=this.vx; this.y+=this.vy; this.vy+=0.04; this.life--; }
-  draw(ctx){
+  constructor(x,y,col,vx,vy,life,size) { Object.assign(this,{x,y,col,vx,vy,life,maxLife:life,size}); }
+  update() { this.x+=this.vx; this.y+=this.vy; this.vy+=0.04; this.life--; }
+  draw() {
     const a=this.life/this.maxLife;
-    ctx.globalAlpha=a*0.85;
-    ctx.fillStyle=this.color;
-    ctx.beginPath();
-    ctx.arc(this.x,this.y,this.size*a,0,Math.PI*2);
-    ctx.fill();
+    ctx.globalAlpha=a*0.9; ctx.fillStyle=this.col;
+    ctx.beginPath(); ctx.arc(this.x,this.y,this.size*a,0,Math.PI*2); ctx.fill();
   }
 }
 
 // ── Trail ─────────────────────────────────────────────────────────────────────
 class Trail {
-  constructor(){ this.pts=[]; }
-  add(x,y){ this.pts.push({x,y}); if(this.pts.length>18) this.pts.shift(); }
-  draw(ctx,color){
+  constructor() { this.pts=[]; }
+  add(x,y) { this.pts.push({x,y}); if(this.pts.length>20) this.pts.shift(); }
+  draw(color) {
     if(this.pts.length<2) return;
-    ctx.save();
-    ctx.shadowBlur=0;
-    for(let i=1;i<this.pts.length;i++){
+    ctx.save(); ctx.lineCap='round';
+    for(let i=1;i<this.pts.length;i++) {
       const t=i/this.pts.length;
       ctx.beginPath();
-      ctx.moveTo(this.pts[i-1].x,this.pts[i-1].y);
-      ctx.lineTo(this.pts[i].x,this.pts[i].y);
-      ctx.strokeStyle=color;
-      ctx.globalAlpha=t*0.65;
-      ctx.lineWidth=t*5;
+      ctx.moveTo(this.pts[i-1].x, this.pts[i-1].y);
+      ctx.lineTo(this.pts[i].x,   this.pts[i].y);
+      ctx.strokeStyle=color; ctx.globalAlpha=t*0.7; ctx.lineWidth=t*6;
       ctx.stroke();
     }
     ctx.restore();
@@ -222,9 +369,9 @@ class Trail {
 
 // ── Screen shake ──────────────────────────────────────────────────────────────
 let shakeAmt=0;
-const addShake=(a)=>{ shakeAmt=Math.max(shakeAmt,a); };
+const addShake = a => { shakeAmt=Math.max(shakeAmt,a); };
 
-// ── Buttons ───────────────────────────────────────────────────────────────────
+// ── Button registry ───────────────────────────────────────────────────────────
 let buttons=[];
 function btn(label,x,y,w,h,color,action,sub){
   buttons.push({label,x,y,w,h,color,action,sub});
@@ -233,20 +380,14 @@ function drawBtns(){
   for(const b of buttons){
     ctx.save();
     ctx.shadowBlur=16; ctx.shadowColor=b.color;
-    ctx.fillStyle='rgba(0,0,0,0.65)';
-    rr(ctx,b.x,b.y,b.w,b.h,10); ctx.fill();
-    ctx.strokeStyle=b.color; ctx.lineWidth=2.2;
-    rr(ctx,b.x,b.y,b.w,b.h,10); ctx.stroke();
-    ctx.shadowBlur=6; ctx.shadowColor='#fff';
-    ctx.fillStyle='#fff';
+    ctx.fillStyle='rgba(0,0,0,0.65)'; rr(ctx,b.x,b.y,b.w,b.h,10); ctx.fill();
+    ctx.strokeStyle=b.color; ctx.lineWidth=2.2; rr(ctx,b.x,b.y,b.w,b.h,10); ctx.stroke();
+    ctx.shadowBlur=6; ctx.shadowColor='#fff'; ctx.fillStyle='#fff';
     ctx.font=`bold ${b.sub?16:19}px "Segoe UI"`;
     ctx.textAlign='center'; ctx.textBaseline='middle';
     ctx.fillText(b.label,b.x+b.w/2,b.y+b.h/2-(b.sub?7:0));
-    if(b.sub){
-      ctx.font='12px "Segoe UI"'; ctx.fillStyle='#aaccff';
-      ctx.shadowBlur=0;
-      ctx.fillText(b.sub,b.x+b.w/2,b.y+b.h/2+10);
-    }
+    if(b.sub){ ctx.font='12px "Segoe UI"'; ctx.fillStyle='#aaccff'; ctx.shadowBlur=0;
+      ctx.fillText(b.sub,b.x+b.w/2,b.y+b.h/2+10); }
     ctx.restore();
   }
 }
@@ -255,435 +396,440 @@ function rr(ctx,x,y,w,h,r){
   ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y); ctx.arcTo(x+w,y,x+w,y+r,r);
   ctx.lineTo(x+w,y+h-r); ctx.arcTo(x+w,y+h,x+w-r,y+h,r);
   ctx.lineTo(x+r,y+h); ctx.arcTo(x,y+h,x,y+h-r,r);
-  ctx.lineTo(x,y+r); ctx.arcTo(x,y,x+r,y,r);
-  ctx.closePath();
+  ctx.lineTo(x,y+r); ctx.arcTo(x,y,x+r,y,r); ctx.closePath();
 }
 
-// ── Point in triangle ─────────────────────────────────────────────────────────
-function inTri(p,a,b,c){
-  const s=(a.x-c.x)*(p.y-c.y)-(a.y-c.y)*(p.x-c.x);
-  const t=(b.x-a.x)*(p.y-a.y)-(b.y-a.y)*(p.x-a.x);
-  const u=(c.x-b.x)*(p.y-b.y)-(c.y-b.y)*(p.x-b.x);
-  return (s>=0&&t>=0&&u>=0)||(s<=0&&t<=0&&u<=0);
-}
-
-// ── States ────────────────────────────────────────────────────────────────────
-const S={MENU:'menu',DIFF:'diff',SKIN:'skin',PLAY:'play',PAUSE:'pause',DEAD:'dead'};
-let state=S.MENU;
-
-// ── Game ──────────────────────────────────────────────────────────────────────
+// ── Game class ────────────────────────────────────────────────────────────────
 class Game {
-  constructor(){
-    const cfg=DIFFS[difficulty];
-    this.cfg=cfg;
-    this.scrollSpeed=cfg.scroll;
-    this.distance=0;
-    this.score=0;
-    this.newHS=false;
-    this.particles=[];
-    this.trail=new Trail();
-    this.spikes=[];
-    this.coins=[];
-    this.achPopup=null; this.achTimer=0;
+  constructor() {
+    const cfg = DIFFS[difficulty];
+    this.cfg = cfg;
+    this.scrollSpeed = cfg.scroll;
+    this.distance = 0;
+    this.score = 0;
+    this.newHS = false;
+    this.particles = [];
+    this.trail = new Trail();
+    this.coins = [];
+    this.achPopup = null; this.achTimer = 0;
 
-    // Player — starts in vertical center, slight grace period
-    this.px=PLAYER_X;
-    this.py=PLAY_TOP + PLAY_H/2;
-    this.pressing=false;
-    this.alive=true;
-    this.deathTimer=0;
-    this.graceFrames=60; // invincible for first 60 frames
+    // Player
+    this.px = PLAYER_X;
+    this.py = BASE_H / 2;
+    this.pressing = false;
+    this.alive = true;
+    this.deathTimer = 0;
+    this.graceFrames = 70; // invincible at start
 
-    // Populate level ahead
-    this._nextX=BASE_W+80;
-    for(let i=0;i<10;i++) this._spawnGroup();
+    // Corridor node list (world-space x coordinates)
+    this.nodes = [];
+    this._genX = 0; // world x of last generated node
+
+    // Seed with a flat wide opening
+    this._seedOpening();
+    // Pre-generate enough corridor
+    while (this._genX < BASE_W + 1200) this._extendCorridor();
   }
 
-  _spawnGroup(){
-    const cfg=this.cfg;
-    const x=this._nextX;
-    const gap=cfg.minGap+Math.random()*(cfg.maxGap-cfg.minGap);
-
-    // 1-3 bottom spikes
-    const nb=1+Math.floor(Math.random()*2);
-    for(let i=0;i<nb;i++)
-      this.spikes.push({x:x+i*(SPIKE_W+2), y:PLAY_BOT, dir:'up'});
-
-    // top spikes occasionally (less frequent)
-    if(Math.random()<0.4){
-      const nt=1+Math.floor(Math.random()*2);
-      const tx=x+Math.random()*30;
-      for(let i=0;i<nt;i++)
-        this.spikes.push({x:tx+i*(SPIKE_W+2), y:PLAY_TOP, dir:'down'});
+  _seedOpening() {
+    // First 400px: flat wide corridor, centered
+    const hg = DIFFS[difficulty].gapStart;
+    const cy = BASE_H / 2;
+    for (let x=0; x<=400; x+=40) {
+      this.nodes.push({ x, topY: cy-hg, botY: cy+hg });
     }
-
-    // coin
-    if(Math.random()<cfg.coinRate)
-      this.coins.push({x:x+gap*0.4, y:PLAY_TOP+30+Math.random()*(PLAY_H-60), done:false});
-
-    this._nextX=x+gap;
+    this._genX = 400;
   }
 
-  setPressed(v){
-    if(!this.alive) return;
-    if(v!==this.pressing){ this.pressing=v; playClick(); }
+  _extendCorridor() {
+    const last = this.nodes[this.nodes.length-1] || { x:0, topY:BASE_H/2-80, botY:BASE_H/2+80 };
+    const newNodes = makeSection(last.x, last.topY, last.botY, this.score);
+    for (const n of newNodes) {
+      if (n.x > last.x) this.nodes.push(n); // avoid duplicates at startX
+    }
+    const coin = makeCoin(newNodes, this.score);
+    if (coin) this.coins.push(coin);
+    this._genX = this.nodes[this.nodes.length-1].x;
   }
 
-  update(){
-    if(!this.alive){
+  setPressed(v) {
+    if (!this.alive) return;
+    if (v !== this.pressing) { this.pressing = v; playClick(); }
+  }
+
+  update() {
+    if (!this.alive) {
       this.deathTimer++;
-      for(const p of this.particles) p.update();
-      this.particles=this.particles.filter(p=>p.life>0);
+      for (const p of this.particles) p.update();
+      this.particles = this.particles.filter(p=>p.life>0);
       return;
     }
+    if (this.graceFrames>0) this.graceFrames--;
 
-    if(this.graceFrames>0) this.graceFrames--;
+    // Scroll speed ramp
+    const cfg = DIFFS[difficulty];
+    this.scrollSpeed = cfg.scroll + this.score * 0.0018;
 
-    // True wave movement: constant diagonal, direction flips on press
-    const cfg=DIFFS[difficulty];
-    this.scrollSpeed=cfg.scroll+this.score*0.0015;
-    const vy=this.pressing ? -WAVE_SPD : WAVE_SPD;
-    this.py+=vy;
+    // True wave movement: instant diagonal direction
+    const vy = this.pressing ? -WAVE_SPD : WAVE_SPD;
+    this.py = clamp(this.py + vy, PLAY_TOP + PLAYER_R, PLAY_BOT - PLAYER_R);
 
-    // Wall death
-    if(this.py<=PLAY_TOP+2 || this.py>=PLAY_BOT-2){
-      this.py=Math.max(PLAY_TOP+2, Math.min(PLAY_BOT-2, this.py));
-      if(this.graceFrames<=0) this._die(); return;
+    // Scroll world
+    this.distance += this.scrollSpeed;
+    this.score = Math.floor(this.distance / 10);
+
+    // Shift nodes into screen-relative coords: node.x is world x
+    // Screen x of player = PLAYER_X, world x of player = this.distance - (PLAYER_X - BASE_W/2)
+    // Actually: world x that appears at screen x=0: dist - PLAYER_X
+    // So screen_x = node.world_x - (this.distance - PLAYER_X)
+
+    // Extend corridor ahead
+    const worldRight = this.distance - PLAYER_X + BASE_W + 400;
+    while (this._genX < worldRight) this._extendCorridor();
+
+    // Remove nodes that are off screen left
+    const worldLeft = this.distance - PLAYER_X - 200;
+    while (this.nodes.length > 2 && this.nodes[1].x < worldLeft) this.nodes.shift();
+
+    // Coin collection
+    const playerWorldX = this.distance; // player is always at world x = distance (relative)
+    // Actually let's clarify coordinates: we render node at screen_x = node.x - (distance - PLAYER_X)
+    // Player screen x = PLAYER_X, player world x = distance
+    for (const c of this.coins) {
+      if (!c.done) {
+        const cx_screen = c.x - (this.distance - PLAYER_X);
+        if (Math.abs(cx_screen - PLAYER_X) < 20 && Math.abs(c.y - this.py) < 18) {
+          c.done = true; totalCoins++; sv('wCoins3',totalCoins); playCoin();
+          for(let i=0;i<10;i++) this.particles.push(
+            new Particle(PLAYER_X, this.py, '#ffd700',
+              (Math.random()-0.5)*4,(Math.random()-0.5)*4-1, 20+Math.random()*12, 3));
+        }
+      }
     }
+    this.coins = this.coins.filter(c => (c.x - (this.distance - PLAYER_X)) > -40);
 
-    // Scroll
-    const dx=this.scrollSpeed;
-    for(const s of this.spikes) s.x-=dx;
-    for(const c of this.coins)  c.x-=dx;
-    this.distance+=dx;
-    this.score=Math.floor(this.distance/10);
-
-    // Spawn more when needed
-    if(this._nextX < this.distance + BASE_W + 300){
-      this._nextX=this.distance+BASE_W+60;
-      for(let i=0;i<5;i++) this._spawnGroup();
-    }
-
-    // Cleanup
-    this.spikes=this.spikes.filter(s=>s.x>-SPIKE_W*2);
-    this.coins =this.coins.filter(c=>c.x>-30);
-
-    // Coin pickup
-    for(const c of this.coins){
-      if(!c.done && Math.hypot(this.px-c.x,this.py-c.y)<16){
-        c.done=true; totalCoins++; save('wCoins2',totalCoins); playCoin();
-        for(let i=0;i<10;i++)
-          this.particles.push(new Particle(c.x,c.y,'#ffd700',
-            (Math.random()-0.5)*4,(Math.random()-0.5)*4-1,20+Math.random()*12,3));
+    // Collision: sample corridor at player world x
+    if (this.graceFrames <= 0) {
+      const { topY, botY } = sampleCorridor(this.nodes, this.distance);
+      if (this.py - PLAYER_R < topY || this.py + PLAYER_R > botY) {
+        this._die(); return;
       }
     }
 
-    // Spike collision — only check spikes near player (perf)
-    if(this.graceFrames<=0){
-      const tip={x:this.px+13,y:this.py};
-      const body={x:this.px,y:this.py};
-      for(const s of this.spikes){
-        if(s.x < this.px-20 || s.x > this.px+30) continue;
-        if(this._hitSpike(tip,s)||this._hitSpike(body,s)){ this._die(); return; }
-      }
-    }
-
-    // Trail + trail particles
-    this.trail.add(this.px,this.py);
-    const skin=SKINS[selectedSkin];
-    if(Math.random()<0.35)
+    // Trail & particles
+    this.trail.add(PLAYER_X, this.py);
+    const skin = SKINS[selectedSkin];
+    if (Math.random() < 0.4)
       this.particles.push(new Particle(
-        this.px-8+(Math.random()-0.5)*3, this.py+(Math.random()-0.5)*3,
-        skin.color, -1-Math.random()*1.5,(Math.random()-0.5)*1, 10+Math.random()*6, 2));
-    for(const p of this.particles) p.update();
-    this.particles=this.particles.filter(p=>p.life>0);
+        PLAYER_X-10+(Math.random()-0.5)*4, this.py+(Math.random()-0.5)*4,
+        skin.trail, -1.5-Math.random()*1.5, (Math.random()-0.5)*0.8, 12+Math.random()*6, 2.5));
+    for (const p of this.particles) p.update();
+    this.particles = this.particles.filter(p=>p.life>0);
 
     // Achievements
-    const ach=checkAch(this);
-    if(ach){ this.achPopup=ach; this.achTimer=180; }
-    if(this.achTimer>0) this.achTimer--;
+    const ach = checkAch(this);
+    if (ach) { this.achPopup=ach; this.achTimer=180; }
+    if (this.achTimer>0) this.achTimer--;
 
-    if(this.score>highScore){ highScore=this.score; save('wHS2',highScore); this.newHS=true; }
+    if (this.score>highScore) { highScore=this.score; sv('wHS3',highScore); this.newHS=true; }
+
+    // Screen shake decay
+    if (shakeAmt>0.1) shakeAmt*=0.78; else shakeAmt=0;
   }
 
-  _hitSpike(pt,s){
-    let t,b1,b2;
-    if(s.dir==='up'){
-      t={x:s.x+SPIKE_W/2,y:s.y-SPIKE_H};
-      b1={x:s.x,y:s.y}; b2={x:s.x+SPIKE_W,y:s.y};
-    } else {
-      t={x:s.x+SPIKE_W/2,y:s.y+SPIKE_H};
-      b1={x:s.x,y:s.y}; b2={x:s.x+SPIKE_W,y:s.y};
-    }
-    return inTri(pt,t,b1,b2);
-  }
-
-  _die(){
-    if(!this.alive) return;
-    this.alive=false; playExplosion(); addShake(10); stopMusic();
+  _die() {
+    if (!this.alive) return;
+    this.alive=false; playExplosion(); addShake(12); stopMusic();
     const skin=SKINS[selectedSkin];
-    for(let i=0;i<36;i++){
+    for(let i=0;i<38;i++){
       const a=Math.random()*Math.PI*2, sp=2+Math.random()*5;
-      this.particles.push(new Particle(this.px,this.py,
-        i%2===0?skin.color:'#ffffff',
-        Math.cos(a)*sp,Math.sin(a)*sp-1.5,28+Math.random()*24,2+Math.random()*3));
+      this.particles.push(new Particle(PLAYER_X, this.py,
+        i%2===0?skin.color:'#ffffff', Math.cos(a)*sp, Math.sin(a)*sp-1.5,
+        28+Math.random()*24, 2+Math.random()*3));
     }
     state=S.DEAD;
   }
 
-  draw(){
-    // Background
+  draw() {
     drawBackground(this.distance);
 
-    // Walls
-    drawWalls();
+    // Build screen-space corridor for rendering
+    const offset = this.distance - PLAYER_X; // world x of screen left edge
+    const screenNodes = this.nodes.map(n => ({ sx: n.x - offset, topY: n.topY, botY: n.botY }));
 
-    // Apply shake
+    // Draw corridor walls
+    this._drawWalls(screenNodes);
+
+    // Shake transform
     ctx.save();
-    if(shakeAmt>0.1){
-      ctx.translate((Math.random()-0.5)*shakeAmt*2,(Math.random()-0.5)*shakeAmt*2);
-      shakeAmt*=0.75;
-    } else shakeAmt=0;
-
-    // Spikes
-    for(const s of this.spikes) drawSpike(s);
+    if (shakeAmt>0.1) ctx.translate((Math.random()-0.5)*shakeAmt*2,(Math.random()-0.5)*shakeAmt*2);
 
     // Coins
-    for(const c of this.coins) if(!c.done) drawCoin(c.x,c.y,this.distance);
+    for (const c of this.coins) {
+      if (!c.done) {
+        const cx = c.x - offset;
+        if (cx > -20 && cx < BASE_W+20) drawCoin(cx, c.y, this.distance);
+      }
+    }
 
     // Particles (behind player)
     ctx.save(); ctx.globalAlpha=1;
-    for(const p of this.particles) p.draw(ctx);
+    for (const p of this.particles) p.draw();
     ctx.restore();
 
     // Trail
-    const skin=SKINS[selectedSkin];
-    this.trail.draw(ctx,skin.color);
+    const skin = SKINS[selectedSkin];
+    this.trail.draw(skin.color);
 
     // Player
-    if(this.alive || this.deathTimer<12){
-      const a=this.alive?1:Math.max(0,1-this.deathTimer/12);
-      drawPlayer(this.px,this.py,this.pressing,skin,a,this.graceFrames>0);
+    if (this.alive || this.deathTimer < 14) {
+      const a = this.alive ? 1 : Math.max(0, 1-this.deathTimer/14);
+      drawPlayer(PLAYER_X, this.py, this.pressing, skin, a, this.graceFrames>0);
     }
 
-    ctx.restore(); // end shake
+    ctx.restore(); // shake
 
     // HUD
+    this._drawHUD();
+    if (this.achPopup && this.achTimer>0) drawAchPopup(this.achPopup, this.achTimer);
+  }
+
+  _drawWalls(screenNodes) {
+    if (screenNodes.length < 2) return;
+
+    // Collect visible nodes + one off each edge
+    const visible = screenNodes.filter(n => n.sx > -60 && n.sx < BASE_W+60);
+    if (visible.length < 2) return;
+
+    // ── Top wall fill ──────────────────────────────────────────────────────
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(visible[0].sx, 0);
+    for (const n of visible) ctx.lineTo(n.sx, n.topY);
+    ctx.lineTo(visible[visible.length-1].sx, 0);
+    ctx.closePath();
+    ctx.fillStyle = '#0a3a4a';
+    ctx.fill();
+
+    // Top wall inner glow edge
+    ctx.beginPath();
+    for (let i=0; i<visible.length; i++) {
+      if(i===0) ctx.moveTo(visible[i].sx, visible[i].topY);
+      else ctx.lineTo(visible[i].sx, visible[i].topY);
+    }
+    ctx.strokeStyle = '#00e5ff';
+    ctx.lineWidth = 2.5;
+    ctx.shadowBlur = 14; ctx.shadowColor = '#00e5ff';
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    // ── Bottom wall fill ───────────────────────────────────────────────────
+    ctx.beginPath();
+    ctx.moveTo(visible[0].sx, BASE_H);
+    for (const n of visible) ctx.lineTo(n.sx, n.botY);
+    ctx.lineTo(visible[visible.length-1].sx, BASE_H);
+    ctx.closePath();
+    ctx.fillStyle = '#0a3a4a';
+    ctx.fill();
+
+    // Bottom wall inner glow edge
+    ctx.beginPath();
+    for (let i=0; i<visible.length; i++) {
+      if(i===0) ctx.moveTo(visible[i].sx, visible[i].botY);
+      else ctx.lineTo(visible[i].sx, visible[i].botY);
+    }
+    ctx.strokeStyle = '#00e5ff';
+    ctx.lineWidth = 2.5;
+    ctx.shadowBlur = 14; ctx.shadowColor = '#00e5ff';
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    // ── Spike teeth on top wall (pointing down into gap) ───────────────────
+    this._drawTeeth(visible, 'top');
+    this._drawTeeth(visible, 'bot');
+
+    ctx.restore();
+  }
+
+  _drawTeeth(nodes, side) {
+    const SW = 22, SH = 22;
+    ctx.fillStyle = '#b0eeff';
+    ctx.strokeStyle = '#003344'; ctx.lineWidth = 1.2;
+
+    // Sample the wall edge at regular intervals for teeth placement
+    const step = SW + 3;
+    for (let sx=nodes[0].sx; sx<nodes[nodes.length-1].sx+SW; sx+=step) {
+      // Interpolate topY/botY at this sx from nodes
+      let edgeY;
+      let found=false;
+      for(let i=0;i<nodes.length-1;i++){
+        if(sx>=nodes[i].sx && sx<=nodes[i+1].sx){
+          const t=(sx-nodes[i].sx)/(nodes[i+1].sx-nodes[i].sx);
+          const s=t*t*(3-2*t);
+          edgeY = side==='top'
+            ? lerp(nodes[i].topY, nodes[i+1].topY, s)
+            : lerp(nodes[i].botY, nodes[i+1].botY, s);
+          found=true; break;
+        }
+      }
+      if (!found) continue;
+      if (sx < -SW || sx > BASE_W + SW) continue;
+
+      ctx.beginPath();
+      if (side==='top') {
+        // Spike pointing down from top wall
+        ctx.moveTo(sx, edgeY);
+        ctx.lineTo(sx+SW/2, edgeY+SH);
+        ctx.lineTo(sx+SW, edgeY);
+      } else {
+        // Spike pointing up from bottom wall
+        ctx.moveTo(sx, edgeY);
+        ctx.lineTo(sx+SW/2, edgeY-SH);
+        ctx.lineTo(sx+SW, edgeY);
+      }
+      ctx.closePath();
+      ctx.fill(); ctx.stroke();
+    }
+  }
+
+  _drawHUD() {
     ctx.save();
     ctx.shadowBlur=8; ctx.shadowColor='#00ffcc';
     ctx.fillStyle='#ffffff';
     ctx.font='bold 20px "Segoe UI"';
     ctx.textAlign='left'; ctx.textBaseline='top';
-    ctx.fillText('SCORE  '+this.score,12,8);
+    ctx.fillText('SCORE  '+this.score, 12, 8);
     ctx.font='13px "Segoe UI"';
-    ctx.fillStyle=this.newHS?'#ffd700':'#88ccff';
-    ctx.shadowColor=this.newHS?'#ffd700':'#88ccff';
-    ctx.fillText('BEST  '+highScore,12,32);
+    ctx.fillStyle = this.newHS ? '#ffd700' : '#88ccff';
+    ctx.shadowColor = this.newHS ? '#ffd700' : '#88ccff';
+    ctx.fillText('BEST  '+highScore, 12, 32);
     ctx.fillStyle='#ffd700'; ctx.shadowColor='#ffd700';
     ctx.textAlign='right'; ctx.font='bold 15px "Segoe UI"';
-    ctx.fillText('🪙 '+totalCoins,BASE_W-12,8);
+    ctx.fillText('🪙 '+totalCoins, BASE_W-12, 8);
     const dc={easy:'#44ff00',normal:'#00ffcc',hard:'#ff5500'}[difficulty];
     ctx.fillStyle=dc; ctx.shadowColor=dc;
     ctx.font='bold 12px "Segoe UI"';
-    ctx.fillText(difficulty.toUpperCase(),BASE_W-12,28);
+    ctx.fillText(difficulty.toUpperCase(), BASE_W-12, 28);
     ctx.restore();
-
-    // Achievement popup
-    if(this.achPopup && this.achTimer>0) drawAchPopup(this.achPopup,this.achTimer);
   }
 }
 
 // ── Draw helpers ──────────────────────────────────────────────────────────────
-function drawWalls(){
-  ctx.save();
-  // teal wall blocks
-  ctx.fillStyle='#0d4a66';
-  ctx.fillRect(0,0,BASE_W,WALL_T);
-  ctx.fillRect(0,PLAY_BOT,BASE_W,WALL_T);
-
-  // glowing edge lines
-  ctx.strokeStyle='#00e5ff';
-  ctx.lineWidth=2;
-  ctx.shadowBlur=12; ctx.shadowColor='#00e5ff';
-  ctx.beginPath(); ctx.moveTo(0,WALL_T); ctx.lineTo(BASE_W,WALL_T); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(0,PLAY_BOT); ctx.lineTo(BASE_W,PLAY_BOT); ctx.stroke();
-
-  // wall spikes (decorative, no hitbox)
-  ctx.shadowBlur=0;
-  ctx.fillStyle='#00ccdd'; ctx.strokeStyle='#003344'; ctx.lineWidth=1;
-  for(let x=0;x<BASE_W;x+=SPIKE_W+2){
-    // bottom of ceiling wall
-    ctx.beginPath();
-    ctx.moveTo(x,WALL_T); ctx.lineTo(x+SPIKE_W/2,WALL_T-12); ctx.lineTo(x+SPIKE_W,WALL_T);
-    ctx.fill(); ctx.stroke();
-    // top of floor wall
-    ctx.beginPath();
-    ctx.moveTo(x,PLAY_BOT); ctx.lineTo(x+SPIKE_W/2,PLAY_BOT+12); ctx.lineTo(x+SPIKE_W,PLAY_BOT);
-    ctx.fill(); ctx.stroke();
-  }
-  ctx.restore();
-}
-
-function drawSpike(s){
-  ctx.save();
-  ctx.fillStyle='#d0f0ff';
-  ctx.strokeStyle='#003344'; ctx.lineWidth=1.5;
-  // subtle glow, not per-spike shadow (too slow)
-  ctx.beginPath();
-  if(s.dir==='up'){
-    ctx.moveTo(s.x,s.y);
-    ctx.lineTo(s.x+SPIKE_W/2,s.y-SPIKE_H);
-    ctx.lineTo(s.x+SPIKE_W,s.y);
-  } else {
-    ctx.moveTo(s.x,s.y);
-    ctx.lineTo(s.x+SPIKE_W/2,s.y+SPIKE_H);
-    ctx.lineTo(s.x+SPIKE_W,s.y);
-  }
-  ctx.closePath(); ctx.fill(); ctx.stroke();
-  ctx.restore();
-}
-
-function drawCoin(x,y,dist){
-  const pulse=0.85+0.15*Math.sin(dist*0.06+x);
-  ctx.save();
-  ctx.globalAlpha=pulse;
-  ctx.fillStyle='#ffd700';
-  ctx.strokeStyle='#fff8dc'; ctx.lineWidth=1.5;
+function drawCoin(x, y, dist) {
+  const pulse = 0.82+0.18*Math.sin(dist*0.06+x);
+  ctx.save(); ctx.globalAlpha=pulse;
+  ctx.fillStyle='#ffd700'; ctx.strokeStyle='#fff8dc'; ctx.lineWidth=1.5;
+  ctx.shadowBlur=12; ctx.shadowColor='#ffd700';
   ctx.beginPath(); ctx.arc(x,y,8,0,Math.PI*2); ctx.fill(); ctx.stroke();
-  ctx.fillStyle='#fff8dc';
-  ctx.font='bold 9px sans-serif';
-  ctx.textAlign='center'; ctx.textBaseline='middle';
-  ctx.fillText('$',x,y);
-  ctx.restore();
+  ctx.fillStyle='#fff8dc'; ctx.font='bold 9px sans-serif';
+  ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.shadowBlur=0;
+  ctx.fillText('$',x,y); ctx.restore();
 }
 
-function drawPlayer(px,py,pressing,skin,alpha,grace){
-  // angle: tilt up when going up, down when going down
-  const angle=(pressing?-1:1)*0.38;
+function drawPlayer(px, py, pressing, skin, alpha, grace) {
+  const angle = (pressing ? -1 : 1) * 0.4;
   ctx.save();
-  ctx.globalAlpha=alpha*(grace?0.5+0.5*Math.sin(Date.now()*0.02):1);
-  ctx.translate(px,py);
-  ctx.rotate(angle);
-  ctx.shadowBlur=18; ctx.shadowColor=skin.glow;
+  ctx.globalAlpha = alpha * (grace ? 0.45+0.55*Math.sin(Date.now()*0.025) : 1);
+  ctx.translate(px, py); ctx.rotate(angle);
+  ctx.shadowBlur=20; ctx.shadowColor=skin.glow;
   ctx.fillStyle=skin.color;
-  // arrow/diamond shape matching the photo
+  // Arrow shape like the reference image
   ctx.beginPath();
-  ctx.moveTo(15,0);    // nose
-  ctx.lineTo(-8,-10);  // top back
-  ctx.lineTo(-4,0);    // back notch
-  ctx.lineTo(-8,10);   // bottom back
-  ctx.closePath();
-  ctx.fill();
-  // white outline
-  ctx.shadowBlur=0;
-  ctx.strokeStyle='#ffffff'; ctx.lineWidth=1.5;
-  ctx.stroke();
-  // bright inner line (like photo)
-  ctx.strokeStyle='rgba(255,255,255,0.7)'; ctx.lineWidth=1;
+  ctx.moveTo(16, 0);    // nose tip
+  ctx.lineTo(-6, -11);  // top wing
+  ctx.lineTo(-2, 0);    // back notch
+  ctx.lineTo(-6, 11);   // bottom wing
+  ctx.closePath(); ctx.fill();
+  // White outline
+  ctx.shadowBlur=0; ctx.strokeStyle='#ffffff'; ctx.lineWidth=1.6; ctx.stroke();
+  // Inner bright line (glow detail)
+  ctx.fillStyle='rgba(255,255,255,0.5)';
   ctx.beginPath();
-  ctx.moveTo(12,0); ctx.lineTo(-6,-7); ctx.lineTo(-3,0); ctx.lineTo(-6,7);
-  ctx.closePath(); ctx.stroke();
+  ctx.moveTo(10,0); ctx.lineTo(-3,-6); ctx.lineTo(0,0); ctx.lineTo(-3,6);
+  ctx.closePath(); ctx.fill();
   ctx.restore();
 }
 
-function drawAchPopup(ach,timer){
-  const fade=Math.min(1,(180-timer)/20)*(timer<40?timer/40:1);
+function drawAchPopup(ach, timer) {
+  const fade = Math.min(1,(180-timer)/20) * (timer<40?timer/40:1);
   ctx.save(); ctx.globalAlpha=fade;
-  const w=260,h=54,x=(BASE_W-w)/2,y=56;
-  ctx.fillStyle='rgba(0,0,0,0.8)';
-  ctx.strokeStyle='#ffd700'; ctx.lineWidth=2;
+  const w=260,h=54,x=(BASE_W-w)/2,y=60;
+  ctx.fillStyle='rgba(0,0,0,0.82)'; ctx.strokeStyle='#ffd700'; ctx.lineWidth=2;
   ctx.shadowBlur=16; ctx.shadowColor='#ffd700';
   rr(ctx,x,y,w,h,10); ctx.fill(); ctx.stroke();
   ctx.shadowBlur=0; ctx.fillStyle='#ffd700';
   ctx.font='bold 13px "Segoe UI"'; ctx.textAlign='center'; ctx.textBaseline='middle';
-  ctx.fillText('🏆 '+ach.label+' Unlocked!',BASE_W/2,y+18);
+  ctx.fillText('🏆 '+ach.label+' Unlocked!', BASE_W/2, y+18);
   ctx.fillStyle='#cccccc'; ctx.font='12px "Segoe UI"';
-  ctx.fillText(ach.desc,BASE_W/2,y+37);
+  ctx.fillText(ach.desc, BASE_W/2, y+37);
   ctx.restore();
 }
 
-// ── Menu drawing ──────────────────────────────────────────────────────────────
+// ── Menu ──────────────────────────────────────────────────────────────────────
 let menuT=0;
-const menuPts=Array.from({length:30},()=>({
+const menuPts = Array.from({length:28}, ()=>({
   x:Math.random()*BASE_W, y:Math.random()*BASE_H,
-  vx:(Math.random()-0.5)*0.5, vy:(Math.random()-0.5)*0.5,
-  r:1+Math.random()*2,
-}));
+  vx:(Math.random()-0.5)*0.5, vy:(Math.random()-0.5)*0.5, r:1+Math.random()*2 }));
 
-function drawMenuBg(){
+function drawMenuBg() {
   drawBackground(menuT*2);
-  // floating dots
   ctx.save();
   for(const p of menuPts){
     p.x+=p.vx; p.y+=p.vy;
     if(p.x<0)p.x=BASE_W; if(p.x>BASE_W)p.x=0;
     if(p.y<0)p.y=BASE_H; if(p.y>BASE_H)p.y=0;
-    ctx.globalAlpha=0.35; ctx.fillStyle='#00ccff';
+    ctx.globalAlpha=0.3; ctx.fillStyle='#00ccff';
     ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill();
   }
   ctx.restore();
 }
 
-function drawMainMenu(){
+function drawMainMenu() {
   drawMenuBg();
-  const pulse=0.92+0.08*Math.sin(menuT*0.04);
-  ctx.save();
-  ctx.textAlign='center';
+  const pulse=0.93+0.07*Math.sin(menuT*0.04);
+  ctx.save(); ctx.textAlign='center';
   ctx.font='bold 50px "Segoe UI"'; ctx.fillStyle='#ffffff';
   ctx.shadowBlur=28; ctx.shadowColor='#00ccff';
   ctx.translate(BASE_W/2,0); ctx.scale(pulse,pulse); ctx.translate(-BASE_W/2,0);
-  ctx.fillText('GEOMETRIC DASH',BASE_W/2,82);
-  ctx.font='bold 20px "Segoe UI"'; ctx.fillStyle='#00eeff';
-  ctx.shadowBlur=12;
-  ctx.fillText('FLYING WAVE CHALLENGE',BASE_W/2,114);
-  ctx.restore();
-
-  ctx.save();
-  ctx.textAlign='center'; ctx.font='15px "Segoe UI"';
+  ctx.fillText('GEOMETRIC DASH',BASE_W/2,80);
+  ctx.font='bold 20px "Segoe UI"'; ctx.fillStyle='#00eeff'; ctx.shadowBlur=12;
+  ctx.fillText('FLYING WAVE CHALLENGE',BASE_W/2,113); ctx.restore();
+  ctx.save(); ctx.textAlign='center'; ctx.font='15px "Segoe UI"';
   ctx.fillStyle='#ffd700'; ctx.shadowBlur=8; ctx.shadowColor='#ffd700';
-  ctx.fillText('🏆 BEST: '+highScore+'    🪙 COINS: '+totalCoins,BASE_W/2,148);
-  ctx.restore();
-
+  ctx.fillText('🏆 BEST: '+highScore+'    🪙 COINS: '+totalCoins, BASE_W/2, 146); ctx.restore();
   buttons=[];
-  const bw=200,bh=50,cx=BASE_W/2-100;
-  btn('▶  PLAY',cx,170,bw,bh,'#00ffcc',()=>{ state=S.DIFF; });
-  btn('🎨  SKINS',cx,234,bw,bh,'#aa44ff',()=>{ state=S.SKIN; });
+  btn('▶  PLAY',  BASE_W/2-100,168,200,50,'#00ffcc',()=>{ state=S.DIFF; });
+  btn('🎨  SKINS',BASE_W/2-100,232,200,50,'#aa44ff',()=>{ state=S.SKIN; });
   drawBtns();
-
-  ctx.save();
-  ctx.textAlign='center'; ctx.font='13px "Segoe UI"';
+  ctx.save(); ctx.textAlign='center'; ctx.font='13px "Segoe UI"';
   ctx.fillStyle='rgba(0,220,255,0.55)';
-  ctx.fillText('HOLD to fly up  •  RELEASE to dive',BASE_W/2,BASE_H-18);
-  ctx.fillText('SPACE / CLICK / TAP',BASE_W/2,BASE_H-36);
-  ctx.restore();
+  ctx.fillText('HOLD to fly up  •  RELEASE to dive', BASE_W/2, BASE_H-18);
+  ctx.fillText('SPACE / CLICK / TAP', BASE_W/2, BASE_H-36); ctx.restore();
 }
 
-function drawDiffMenu(){
+function drawDiffMenu() {
   drawMenuBg();
   ctx.save(); ctx.textAlign='center'; ctx.font='bold 32px "Segoe UI"';
   ctx.fillStyle='#fff'; ctx.shadowBlur=18; ctx.shadowColor='#00ccff';
-  ctx.fillText('SELECT DIFFICULTY',BASE_W/2,72); ctx.restore();
+  ctx.fillText('SELECT DIFFICULTY',BASE_W/2,70); ctx.restore();
   buttons=[];
-  const bw=210,bh=56,cx=BASE_W/2-105;
-  btn('EASY',cx,110,bw,bh,'#44ff00',()=>{ difficulty='easy'; startGame(); },'Relaxed — wide gaps');
-  btn('NORMAL',cx,182,bw,bh,'#00ffcc',()=>{ difficulty='normal'; startGame(); },'Classic challenge');
-  btn('HARD',cx,254,bw,bh,'#ff5500',()=>{ difficulty='hard'; startGame(); },'Maximum intensity');
-  btn('◀ BACK',cx,332,bw,42,'#aaaaaa',()=>{ state=S.MENU; });
+  btn('EASY',  BASE_W/2-105,108,210,56,'#44ff00',()=>{ difficulty='easy';   startGame(); },'Relaxed — wide corridors');
+  btn('NORMAL',BASE_W/2-105,180,210,56,'#00ffcc',()=>{ difficulty='normal'; startGame(); },'Classic challenge');
+  btn('HARD',  BASE_W/2-105,252,210,56,'#ff5500',()=>{ difficulty='hard';   startGame(); },'Tight corridors, fast');
+  btn('◀ BACK',BASE_W/2-105,330,210,42,'#aaaaaa',()=>{ state=S.MENU; });
   drawBtns();
 }
 
-function drawSkinMenu(){
+function drawSkinMenu() {
   drawMenuBg();
   ctx.save(); ctx.textAlign='center'; ctx.font='bold 32px "Segoe UI"';
   ctx.fillStyle='#fff'; ctx.shadowBlur=18; ctx.shadowColor='#00ccff';
-  ctx.fillText('SHIP SKINS',BASE_W/2,55);
+  ctx.fillText('SHIP SKINS',BASE_W/2,54);
   ctx.font='bold 15px "Segoe UI"'; ctx.fillStyle='#ffd700'; ctx.shadowColor='#ffd700';
-  ctx.fillText('🪙 '+totalCoins+' coins',BASE_W/2,84); ctx.restore();
-
+  ctx.fillText('🪙 '+totalCoins+' coins',BASE_W/2,82); ctx.restore();
   buttons=[];
-  const cols=3,sw=220,sh=96,pad=18;
-  const totalW=cols*sw+(cols-1)*pad;
-  const sx=(BASE_W-totalW)/2, sy=102;
+  const cols=3,sw=220,sh=96,pad=16;
+  const totalW=cols*sw+(cols-1)*pad, sx=(BASE_W-totalW)/2, sy=100;
   SKINS.forEach((skin,i)=>{
     const col=i%cols, row=Math.floor(i/cols);
     const bx=sx+col*(sw+pad), by=sy+row*(sh+pad);
@@ -691,75 +837,69 @@ function drawSkinMenu(){
     ctx.save();
     ctx.fillStyle=sel?'rgba(0,30,40,0.85)':'rgba(0,0,0,0.5)';
     ctx.strokeStyle=sel?skin.color:'rgba(255,255,255,0.2)';
-    ctx.lineWidth=sel?2.5:1.2;
-    ctx.shadowBlur=sel?20:0; ctx.shadowColor=skin.glow;
+    ctx.lineWidth=sel?2.5:1.2; ctx.shadowBlur=sel?20:0; ctx.shadowColor=skin.glow;
     rr(ctx,bx,by,sw,sh,10); ctx.fill(); ctx.stroke();
-    // mini ship
-    ctx.translate(bx+34,by+sh/2); ctx.shadowBlur=14; ctx.shadowColor=skin.glow;
+    ctx.translate(bx+33,by+sh/2); ctx.shadowBlur=12; ctx.shadowColor=skin.glow;
     ctx.fillStyle=skin.color;
-    ctx.beginPath();
-    ctx.moveTo(13,0); ctx.lineTo(-7,-9); ctx.lineTo(-3,0); ctx.lineTo(-7,9);
-    ctx.closePath(); ctx.fill();
-    ctx.strokeStyle='#fff'; ctx.lineWidth=1.2; ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(12,0); ctx.lineTo(-5,-9); ctx.lineTo(-2,0); ctx.lineTo(-5,9);
+    ctx.closePath(); ctx.fill(); ctx.strokeStyle='#fff'; ctx.lineWidth=1.2; ctx.stroke();
     ctx.setTransform(scale,0,0,scale,0,0);
     ctx.fillStyle='#fff'; ctx.font='bold 14px "Segoe UI"';
     ctx.textAlign='left'; ctx.textBaseline='middle'; ctx.shadowBlur=0;
-    ctx.fillText(skin.name,bx+58,by+sh/2-11);
-    ctx.font='12px "Segoe UI"';
-    ctx.fillStyle=owned?'#88ff88':'#ffcc44';
-    ctx.fillText(owned?(sel?'✔ Equipped':'Owned'):`🪙 ${skin.cost}`,bx+58,by+sh/2+8);
+    ctx.fillText(skin.name,bx+55,by+sh/2-11);
+    ctx.font='12px "Segoe UI"'; ctx.fillStyle=owned?'#88ff88':'#ffcc44';
+    ctx.fillText(owned?(sel?'✔ Equipped':'Owned'):`🪙 ${skin.cost}`,bx+55,by+sh/2+8);
     ctx.restore();
-
-    const action=owned?()=>{ selectedSkin=i; save('wSkin2',i); }:()=>{
-      if(totalCoins>=skin.cost){ totalCoins-=skin.cost; save('wCoins2',totalCoins);
-        unlockedSkins.push(i); save('wSkins2',unlockedSkins); selectedSkin=i; save('wSkin2',i); }
-    };
+    const action = owned
+      ? ()=>{ selectedSkin=i; sv('wSkin3',i); }
+      : ()=>{ if(totalCoins>=skin.cost){ totalCoins-=skin.cost; sv('wCoins3',totalCoins);
+               unlockedSkins.push(i); sv('wSkins3',unlockedSkins); selectedSkin=i; sv('wSkin3',i); } };
     buttons.push({label:owned?(sel?'ON':'USE'):'BUY',
       x:bx+sw-62,y:by+sh/2-14,w:54,h:28,color:owned?skin.color:'#ffd700',sub:null,action});
   });
-
-  buttons.push({label:'◀ BACK',x:BASE_W/2-100,y:BASE_H-48,w:200,h:36,color:'#aaaaaa',sub:null,
-    action:()=>{ state=S.MENU; }});
+  buttons.push({label:'◀ BACK',x:BASE_W/2-100,y:BASE_H-46,w:200,h:36,
+    color:'#aaaaaa',sub:null,action:()=>{ state=S.MENU; }});
   drawBtns();
 }
 
-function drawPauseOverlay(){
-  ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(0,0,BASE_W,BASE_H);
+function drawPauseOverlay() {
+  ctx.fillStyle='rgba(0,0,0,0.52)'; ctx.fillRect(0,0,BASE_W,BASE_H);
   ctx.save(); ctx.textAlign='center'; ctx.font='bold 42px "Segoe UI"';
   ctx.fillStyle='#fff'; ctx.shadowBlur=20; ctx.shadowColor='#00ccff';
-  ctx.fillText('PAUSED',BASE_W/2,BASE_H/2-65); ctx.restore();
+  ctx.fillText('PAUSED',BASE_W/2,BASE_H/2-68); ctx.restore();
   buttons=[];
-  const bw=200,bh=48,cx=BASE_W/2-100;
-  btn('▶ RESUME',cx,BASE_H/2-26,bw,bh,'#00ffcc',()=>{ state=S.PLAY; startMusic(); });
-  btn('↺ RESTART',cx,BASE_H/2+36,bw,bh,'#aa44ff',()=>{ startGame(); });
-  btn('⌂ MENU',cx,BASE_H/2+98,bw,bh,'#ff5500',()=>{ state=S.MENU; stopMusic(); });
+  btn('▶ RESUME', BASE_W/2-100,BASE_H/2-28,200,48,'#00ffcc',()=>{ state=S.PLAY; startMusic(); });
+  btn('↺ RESTART',BASE_W/2-100,BASE_H/2+34,200,48,'#aa44ff',()=>{ startGame(); });
+  btn('⌂ MENU',   BASE_W/2-100,BASE_H/2+96,200,48,'#ff5500',()=>{ state=S.MENU; stopMusic(); });
   drawBtns();
 }
 
-function drawDeadOverlay(){
-  ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(0,0,BASE_W,BASE_H);
+function drawDeadOverlay() {
+  ctx.fillStyle='rgba(0,0,0,0.52)'; ctx.fillRect(0,0,BASE_W,BASE_H);
   ctx.save(); ctx.textAlign='center';
   ctx.font='bold 48px "Segoe UI"'; ctx.fillStyle='#ff4444';
   ctx.shadowBlur=22; ctx.shadowColor='#ff0000';
-  ctx.fillText('GAME OVER',BASE_W/2,BASE_H/2-92);
+  ctx.fillText('GAME OVER',BASE_W/2,BASE_H/2-94);
   ctx.font='bold 24px "Segoe UI"'; ctx.fillStyle='#fff'; ctx.shadowColor='#00ccff'; ctx.shadowBlur=10;
-  ctx.fillText('Score: '+game.score,BASE_W/2,BASE_H/2-50);
+  ctx.fillText('Score: '+game.score,BASE_W/2,BASE_H/2-52);
   if(game.newHS){
     ctx.font='bold 17px "Segoe UI"'; ctx.fillStyle='#ffd700'; ctx.shadowColor='#ffd700';
-    ctx.fillText('🏆 NEW HIGH SCORE!',BASE_W/2,BASE_H/2-22);
+    ctx.fillText('🏆 NEW HIGH SCORE!',BASE_W/2,BASE_H/2-24);
   } else {
     ctx.font='15px "Segoe UI"'; ctx.fillStyle='#88ccff';
-    ctx.fillText('Best: '+highScore,BASE_W/2,BASE_H/2-22);
+    ctx.fillText('Best: '+highScore,BASE_W/2,BASE_H/2-24);
   }
   ctx.restore();
   buttons=[];
-  const bw=200,bh=48,cx=BASE_W/2-100;
-  btn('↺ PLAY AGAIN',cx,BASE_H/2+8,bw,bh,'#00ffcc',()=>{ startGame(); });
-  btn('⌂ MENU',cx,BASE_H/2+70,bw,bh,'#aa44ff',()=>{ state=S.MENU; });
+  btn('↺ PLAY AGAIN',BASE_W/2-100,BASE_H/2+6, 200,48,'#00ffcc',()=>{ startGame(); });
+  btn('⌂ MENU',      BASE_W/2-100,BASE_H/2+68,200,48,'#aa44ff',()=>{ state=S.MENU; });
   drawBtns();
 }
 
 // ── Input ─────────────────────────────────────────────────────────────────────
+const S={MENU:'menu',DIFF:'diff',SKIN:'skin',PLAY:'play',PAUSE:'pause',DEAD:'dead'};
+let state=S.MENU;
+
 function onPress(cx,cy,down){
   ensureAC();
   const lx=cx/scale, ly=cy/scale;
@@ -769,39 +909,32 @@ function onPress(cx,cy,down){
     if(lx>=b.x&&lx<=b.x+b.w&&ly>=b.y&&ly<=b.y+b.h){ playClick(); b.action(); return; }
   }
 }
-
 canvas.addEventListener('mousedown', e=>onPress(e.offsetX,e.offsetY,true));
-canvas.addEventListener('mouseup',   e=>{ if(state===S.PLAY) game.setPressed(false); });
+canvas.addEventListener('mouseup',   ()=>{ if(state===S.PLAY&&game) game.setPressed(false); });
 canvas.addEventListener('touchstart',e=>{ e.preventDefault(); const r=canvas.getBoundingClientRect(),t=e.changedTouches[0]; onPress(t.clientX-r.left,t.clientY-r.top,true); },{passive:false});
-canvas.addEventListener('touchend',  e=>{ e.preventDefault(); if(state===S.PLAY) game.setPressed(false); },{passive:false});
+canvas.addEventListener('touchend',  e=>{ e.preventDefault(); if(state===S.PLAY&&game) game.setPressed(false); },{passive:false});
 window.addEventListener('keydown', e=>{
   if(e.code==='Space'||e.code==='ArrowUp'){ e.preventDefault();
-    if(state===S.PLAY){ game.setPressed(true); return; } }
+    if(state===S.PLAY&&game){ game.setPressed(true); return; } }
   if(e.code==='Escape'||e.code==='KeyP'){
     if(state===S.PLAY){ state=S.PAUSE; stopMusic(); }
     else if(state===S.PAUSE){ state=S.PLAY; startMusic(); } }
 });
 window.addEventListener('keyup', e=>{
   if(e.code==='Space'||e.code==='ArrowUp'){ e.preventDefault();
-    if(state===S.PLAY) game.setPressed(false); }
+    if(state===S.PLAY&&game) game.setPressed(false); }
 });
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 let game=null;
-function startGame(){
-  game=new Game(); state=S.PLAY; startMusic();
-}
+function startGame(){ game=new Game(); state=S.PLAY; startMusic(); }
 
-// ── Main loop ─────────────────────────────────────────────────────────────────
 let lastTS=0;
 function loop(ts){
   requestAnimationFrame(loop);
-  if(ts-lastTS>100){ lastTS=ts; return; } // skip if tab was hidden
-  lastTS=ts;
-  menuT++;
-  buttons=[];
+  if(ts-lastTS>100){ lastTS=ts; return; }
+  lastTS=ts; menuT++; buttons=[];
   ctx.clearRect(0,0,BASE_W,BASE_H);
-
   switch(state){
     case S.MENU:  drawMainMenu(); break;
     case S.DIFF:  drawDiffMenu(); break;
@@ -810,7 +943,7 @@ function loop(ts){
       game.update(); game.draw();
       ctx.save(); ctx.font='12px "Segoe UI"'; ctx.fillStyle='rgba(0,200,255,0.4)';
       ctx.textAlign='right'; ctx.textBaseline='top';
-      ctx.fillText('P = pause',BASE_W-10,46); ctx.restore();
+      ctx.fillText('P = pause', BASE_W-10, 46); ctx.restore();
       break;
     case S.PAUSE:
       if(game){ game.draw(); } drawPauseOverlay(); break;
