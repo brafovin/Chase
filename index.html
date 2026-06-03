@@ -133,17 +133,21 @@ const clamp=(v,lo,hi)=>Math.max(lo,Math.min(hi,v));
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const PX=130;          // player fixed screen x
-const WAVE_SPD=3.0;    // vertical speed when holding/releasing (px/frame) — reduced from 4.2
+const WAVE_SPD=3.0;    // vertical speed (px/frame)
 const PR=8;            // player collision radius
-const SPIKE_H=20;      // spike height (visual and collision)
-const MIN_HG=40;       // minimum corridor half-gap (80px total = spike+player+spike)
-const WALL_PAD=8;      // min wall edge from screen top/bottom
+const TOOTH_W=56;      // spike base width  — large teeth like reference images
+const TOOTH_H=50;      // spike height into gap  (visual + collision boundary)
+// MIN_HG: half-gap must fit tooth + player + tooth:  TOOTH_H + PR + margin = 50+8+10 = 68
+const MIN_HG=70;       // absolute minimum half-gap (140px raw = 40px effective after teeth)
+const WALL_PAD=6;      // min wall edge from screen top/bottom
 
 // ── Difficulty ────────────────────────────────────────────────────────────────
+// gapS/gapF are half-gap values. Effective playable = (gapF*2) - (TOOTH_H*2).
+// normal gapF=80 → raw 160px → effective 60px. Tight but fair.
 const DIFFS={
-  easy:  {spd0:1.8,spd1:3.2,gapS:160,gapF:65, coins:0.28},
-  normal:{spd0:2.0,spd1:5.0,gapS:140,gapF:50, coins:0.16},
-  hard:  {spd0:2.5,spd1:6.5,gapS:115,gapF:40, coins:0.10},
+  easy:  {spd0:1.8,spd1:3.2,gapS:180,gapF:95,  coins:0.28},
+  normal:{spd0:2.0,spd1:5.0,gapS:160,gapF:80,  coins:0.16},
+  hard:  {spd0:2.5,spd1:6.5,gapS:140,gapF:70,  coins:0.10},
 };
 let difficulty='normal';
 
@@ -362,123 +366,132 @@ function drawBg(dist){
   ctx.restore();
 }
 
-// ── Draw: walls with depth and glow ──────────────────────────────────────────
-function drawWalls(screenNodes,dist){
-  if(screenNodes.length<2)return;
-  const vis=screenNodes.filter(n=>n.sx>-80&&n.sx<W+80);
-  if(vis.length<2)return;
+// ── Sample screen-space corridor at a given screen-x ─────────────────────────
+function sampleSX(nodes,sx){
+  if(!nodes.length) return{topY:H/2-80,botY:H/2+80};
+  if(sx<=nodes[0].sx) return{topY:nodes[0].topY,botY:nodes[0].botY};
+  const last=nodes[nodes.length-1];
+  if(sx>=last.sx) return{topY:last.topY,botY:last.botY};
+  for(let i=0;i<nodes.length-1;i++){
+    if(sx>=nodes[i].sx&&sx<=nodes[i+1].sx){
+      const t=(sx-nodes[i].sx)/(nodes[i+1].sx-nodes[i].sx),s=t*t*(3-2*t);
+      return{topY:lerp(nodes[i].topY,nodes[i+1].topY,s),botY:lerp(nodes[i].botY,nodes[i+1].botY,s)};
+    }
+  }
+  return{topY:last.topY,botY:last.botY};
+}
+
+// ── Draw: massive spike-wall polygons like reference images ───────────────────
+function drawWalls(nodes,dist){
+  if(nodes.length<2) return;
+
+  // Work from a bit off-screen left to a bit off-screen right
+  const x0=nodes[0].sx-TOOTH_W*2;
+  const xN=nodes[nodes.length-1].sx+TOOTH_W*2;
+
+  // Build polygon points for top wall inner edge (zigzag teeth pointing DOWN)
+  // and bottom wall inner edge (zigzag teeth pointing UP)
+  const topPts=[], botPts=[];
+  const step=TOOTH_W;
+  for(let sx=x0;sx<=xN;sx+=step){
+    const baseR=sampleSX(nodes,sx);
+    const baseMid=sampleSX(nodes,sx+step*0.5);
+    const baseL=sampleSX(nodes,sx+step);
+    // Top: base at topY, tip pointing down
+    topPts.push(
+      {x:sx,         y:baseR.topY},
+      {x:sx+step*0.5,y:baseMid.topY+TOOTH_H},  // tip
+      {x:sx+step,    y:baseL.topY},
+    );
+    // Bottom: base at botY, tip pointing up
+    botPts.push(
+      {x:sx,         y:baseR.botY},
+      {x:sx+step*0.5,y:baseMid.botY-TOOTH_H},  // tip
+      {x:sx+step,    y:baseL.botY},
+    );
+  }
 
   ctx.save();
 
-  // ── Fill top wall ──────────────────────────────────────────────────────────
+  // ── Top wall filled polygon ────────────────────────────────────────────────
   ctx.beginPath();
-  ctx.moveTo(vis[0].sx-2,-2);
-  for(const n of vis) ctx.lineTo(n.sx,n.topY);
-  ctx.lineTo(vis[vis.length-1].sx+2,-2);
+  ctx.moveTo(x0,-4);
+  ctx.lineTo(xN,-4);
+  // Trace inner edge right→left
+  for(let i=topPts.length-1;i>=0;i--) ctx.lineTo(topPts[i].x,topPts[i].y);
   ctx.closePath();
 
-  // Brick-textured fill via pattern
+  // Brick fill
   if(brickCache){
     const pat=ctx.createPattern(brickCache,'repeat');
-    // Shift pattern with scroll
-    const m=new DOMMatrix();m.translateSelf(-((dist*1.0)%brickCache.width),0);
-    pat.setTransform(m);
-    ctx.fillStyle=pat;
-  } else { ctx.fillStyle='#0a3040'; }
+    const m=new DOMMatrix(); m.translateSelf(-((dist)%brickCache.width),0);
+    pat.setTransform(m); ctx.fillStyle=pat;
+  } else ctx.fillStyle='#0a2a3a';
   ctx.fill();
-
-  // Inner solid overlay so bricks don't show through glow
+  // Darken overlay for depth
   ctx.beginPath();
-  ctx.moveTo(vis[0].sx-2,-2);
-  for(const n of vis) ctx.lineTo(n.sx,n.topY);
-  ctx.lineTo(vis[vis.length-1].sx+2,-2);
+  ctx.moveTo(x0,-4); ctx.lineTo(xN,-4);
+  for(let i=topPts.length-1;i>=0;i--) ctx.lineTo(topPts[i].x,topPts[i].y);
   ctx.closePath();
-  ctx.fillStyle='rgba(5,25,35,0.55)';ctx.fill();
+  ctx.fillStyle='rgba(0,10,20,0.50)'; ctx.fill();
 
-  // ── Fill bottom wall ───────────────────────────────────────────────────────
+  // ── Bottom wall filled polygon ─────────────────────────────────────────────
   ctx.beginPath();
-  ctx.moveTo(vis[0].sx-2,H+2);
-  for(const n of vis) ctx.lineTo(n.sx,n.botY);
-  ctx.lineTo(vis[vis.length-1].sx+2,H+2);
+  ctx.moveTo(x0,H+4);
+  ctx.lineTo(xN,H+4);
+  for(let i=botPts.length-1;i>=0;i--) ctx.lineTo(botPts[i].x,botPts[i].y);
   ctx.closePath();
   if(brickCache){
     const pat=ctx.createPattern(brickCache,'repeat');
-    const m=new DOMMatrix();m.translateSelf(-((dist*1.0)%brickCache.width),0);
-    pat.setTransform(m);ctx.fillStyle=pat;
-  } else {ctx.fillStyle='#0a3040';}
+    const m=new DOMMatrix(); m.translateSelf(-((dist)%brickCache.width),0);
+    pat.setTransform(m); ctx.fillStyle=pat;
+  } else ctx.fillStyle='#0a2a3a';
   ctx.fill();
   ctx.beginPath();
-  ctx.moveTo(vis[0].sx-2,H+2);
-  for(const n of vis) ctx.lineTo(n.sx,n.botY);
-  ctx.lineTo(vis[vis.length-1].sx+2,H+2);
+  ctx.moveTo(x0,H+4); ctx.lineTo(xN,H+4);
+  for(let i=botPts.length-1;i>=0;i--) ctx.lineTo(botPts[i].x,botPts[i].y);
   ctx.closePath();
-  ctx.fillStyle='rgba(5,25,35,0.55)';ctx.fill();
+  ctx.fillStyle='rgba(0,10,20,0.50)'; ctx.fill();
 
-  // ── Glowing inner edges (3 passes: wide dim → narrow bright) ──────────────
-  const edgePasses=[
-    {w:8, a:0.12, col:'#00ffff'},
-    {w:3, a:0.45, col:'#00ffff'},
-    {w:1.2,a:1.0, col:'#aaffff'},
-  ];
-  for(const p of edgePasses){
-    ctx.beginPath();
-    for(let i=0;i<vis.length;i++){
-      i===0?ctx.moveTo(vis[i].sx,vis[i].topY):ctx.lineTo(vis[i].sx,vis[i].topY);
+  // ── Glowing inner edge — 3 passes (wide halo → mid glow → bright edge) ────
+  // Build the jagged polyline paths once, stroke 3 times
+  function strokeEdge(pts,passes){
+    for(const p of passes){
+      ctx.beginPath();
+      for(let i=0;i<pts.length;i++) i===0?ctx.moveTo(pts[i].x,pts[i].y):ctx.lineTo(pts[i].x,pts[i].y);
+      ctx.globalAlpha=p.a; ctx.lineWidth=p.w;
+      ctx.strokeStyle=p.col; ctx.shadowBlur=p.sb; ctx.shadowColor=p.col;
+      ctx.lineJoin='miter'; ctx.miterLimit=8;
+      ctx.stroke();
     }
-    ctx.strokeStyle=p.col;ctx.globalAlpha=p.a;ctx.lineWidth=p.w;
-    ctx.shadowBlur=p.w*4;ctx.shadowColor='#00ffff';ctx.stroke();
-
-    ctx.beginPath();
-    for(let i=0;i<vis.length;i++){
-      i===0?ctx.moveTo(vis[i].sx,vis[i].botY):ctx.lineTo(vis[i].sx,vis[i].botY);
-    }
-    ctx.stroke();
   }
+  const passes=[
+    {w:14, a:0.08, col:'#00ddff', sb:0},
+    {w:5,  a:0.35, col:'#00eeff', sb:12},
+    {w:1.8,a:1.0,  col:'#ccffff', sb:16},
+  ];
+  strokeEdge(topPts,passes);
+  strokeEdge(botPts,passes);
 
-  ctx.globalAlpha=1;ctx.shadowBlur=0;
+  ctx.globalAlpha=1; ctx.shadowBlur=0;
 
-  // ── Spike teeth ────────────────────────────────────────────────────────────
-  drawTeeth(vis,'top');
-  drawTeeth(vis,'bot');
-
-  ctx.restore();
-}
-
-function drawTeeth(nodes,side){
-  const SW=20,SH=SPIKE_H;
-  const step=SW+4;
-  for(let sx=nodes[0].sx;sx<nodes[nodes.length-1].sx+SW;sx+=step){
-    let ey=null;
-    for(let i=0;i<nodes.length-1;i++){
-      if(sx>=nodes[i].sx&&sx<=nodes[i+1].sx){
-        const t=(sx-nodes[i].sx)/(nodes[i+1].sx-nodes[i].sx),s=t*t*(3-2*t);
-        ey=side==='top'?lerp(nodes[i].topY,nodes[i+1].topY,s):lerp(nodes[i].botY,nodes[i+1].botY,s);
-        break;
-      }
+  // ── Bright spike tip highlights ────────────────────────────────────────────
+  ctx.fillStyle='#ffffff'; ctx.shadowBlur=12; ctx.shadowColor='#aaffff';
+  for(let i=1;i<topPts.length;i+=3){  // every tip point (index 1,4,7,...)
+    const p=topPts[i];
+    if(p.x>-4&&p.x<W+4){
+      ctx.beginPath();ctx.arc(p.x,p.y,2.5,0,Math.PI*2);ctx.fill();
     }
-    if(ey===null||sx<-SW||sx>W+SW)continue;
-
-    // Shadow/glow for spike (do once per tooth group — cheaper)
-    ctx.shadowBlur=8;ctx.shadowColor='#00ffff';
-
-    // Spike body — bright white-cyan gradient
-    const tipX=sx+SW/2;
-    const tipY=side==='top'?ey+SH:ey-SH;
-    const grad=ctx.createLinearGradient(sx,ey,tipX,tipY);
-    grad.addColorStop(0,'#c0f8ff');
-    grad.addColorStop(1,'#ffffff');
-    ctx.fillStyle=grad;
-    ctx.strokeStyle='rgba(0,200,240,0.6)';ctx.lineWidth=1;
-    ctx.beginPath();
-    ctx.moveTo(sx,ey);ctx.lineTo(tipX,tipY);ctx.lineTo(sx+SW,ey);
-    ctx.closePath();ctx.fill();ctx.stroke();
-
-    // Glowing tip dot
-    ctx.shadowBlur=10;ctx.shadowColor='#ffffff';
-    ctx.fillStyle='#ffffff';
-    ctx.beginPath();ctx.arc(tipX,tipY,1.5,0,Math.PI*2);ctx.fill();
+  }
+  for(let i=1;i<botPts.length;i+=3){
+    const p=botPts[i];
+    if(p.x>-4&&p.x<W+4){
+      ctx.beginPath();ctx.arc(p.x,p.y,2.5,0,Math.PI*2);ctx.fill();
+    }
   }
   ctx.shadowBlur=0;
+
+  ctx.restore();
 }
 
 // ── Draw: player ship ─────────────────────────────────────────────────────────
@@ -591,10 +604,10 @@ class Game{
 
   _seed(){
     const cfg=DIFFS[difficulty];
-    const hg=cfg.gapS+50, cy=H/2;
-    // 700px of wide flat opening
-    for(let x=0;x<=700;x+=40) this.nodes.push({x,topY:cy-hg,botY:cy+hg});
-    this._genX=700;
+    const hg=cfg.gapS+30, cy=H/2;
+    // 800px of wide flat opening
+    for(let x=0;x<=800;x+=TOOTH_W) this.nodes.push({x,topY:cy-hg,botY:cy+hg});
+    this._genX=800;
   }
 
   _extend(){
@@ -655,7 +668,7 @@ class Game{
     // Collision — spike tips are fatal
     if(this.grace<=0){
       const {topY,botY}=sampleCorridor(this.nodes,this.dist);
-      if(this.py-PR<topY+SPIKE_H||this.py+PR>botY-SPIKE_H){this._die();return;}
+      if(this.py-PR<topY+TOOTH_H||this.py+PR>botY-TOOTH_H){this._die();return;}
     }
 
     // Trail + trail particles
