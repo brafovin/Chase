@@ -187,8 +187,10 @@ function makeSection(startX,sTopY,sBotY,score){
     type=r<0.08?'flat':r<0.22?'rise':r<0.36?'fall':r<0.55?'zigzag':r<0.72?'narrow':'recovery';
   }
 
-  const secLen=lerp(210,140,prog)+Math.random()*lerp(110,60,prog);
-  const nc=Math.max(3,Math.floor(secLen/26));
+  // secLen must be >> TOOTH_W so corridor shifts are gradual across multiple teeth.
+  // Minimum = TOOTH_W*3 = 660px so no single tooth spans a full corridor transition.
+  const secLen=Math.max(TOOTH_W*3, lerp(700,500,prog)+Math.random()*200);
+  const nc=Math.max(6,Math.floor(secLen/40));
   const spd=lerp(cfg.spd0,cfg.spd1,Math.min(1,score/400))+Math.max(0,score-400)*0.001;
   const maxV=WAVE_SPD*(secLen/spd)*0.6;
   const nodes=[];
@@ -289,37 +291,34 @@ class Particle{
 // ── Trail ─────────────────────────────────────────────────────────────────────
 class Trail{
   constructor(){this.pts=[];}
-  add(x,y){this.pts.push({x,y});if(this.pts.length>38)this.pts.shift();}
+  add(x,y){this.pts.push({x,y});if(this.pts.length>55)this.pts.shift();}
   draw(skin){
     if(this.pts.length<2)return;
-    ctx.save();ctx.lineCap='round';ctx.lineJoin='round';
-    // Pass 1: wide outer glow (shows the diagonal path the ship just travelled)
-    for(let i=1;i<this.pts.length;i++){
-      const t=i/this.pts.length;
-      ctx.beginPath();
-      ctx.moveTo(this.pts[i-1].x,this.pts[i-1].y);
-      ctx.lineTo(this.pts[i].x,this.pts[i].y);
-      ctx.strokeStyle=skin.glow; ctx.globalAlpha=t*0.25; ctx.lineWidth=t*20;
-      ctx.shadowBlur=0; ctx.stroke();
-    }
-    // Pass 2: medium bright line
-    for(let i=1;i<this.pts.length;i++){
-      const t=i/this.pts.length;
-      ctx.beginPath();
-      ctx.moveTo(this.pts[i-1].x,this.pts[i-1].y);
-      ctx.lineTo(this.pts[i].x,this.pts[i].y);
-      ctx.strokeStyle=skin.primary; ctx.globalAlpha=t*0.7; ctx.lineWidth=t*6;
-      ctx.stroke();
-    }
-    // Pass 3: bright white core
-    for(let i=1;i<this.pts.length;i++){
-      const t=i/this.pts.length;
-      ctx.beginPath();
-      ctx.moveTo(this.pts[i-1].x,this.pts[i-1].y);
-      ctx.lineTo(this.pts[i].x,this.pts[i].y);
-      ctx.strokeStyle='#ffffff'; ctx.globalAlpha=t*0.5; ctx.lineWidth=t*2;
-      ctx.stroke();
-    }
+    ctx.save();
+    ctx.lineCap='round';ctx.lineJoin='round';
+
+    // Draw as one continuous path per pass — much cheaper and smoother
+    // Pass 1: wide soft glow halo
+    ctx.beginPath();
+    ctx.moveTo(this.pts[0].x,this.pts[0].y);
+    for(let i=1;i<this.pts.length;i++) ctx.lineTo(this.pts[i].x,this.pts[i].y);
+    ctx.strokeStyle=skin.glow; ctx.globalAlpha=0.30;
+    ctx.lineWidth=22; ctx.shadowBlur=0; ctx.stroke();
+
+    // Pass 2: mid glow
+    ctx.beginPath();
+    ctx.moveTo(this.pts[0].x,this.pts[0].y);
+    for(let i=1;i<this.pts.length;i++) ctx.lineTo(this.pts[i].x,this.pts[i].y);
+    ctx.strokeStyle=skin.primary; ctx.globalAlpha=0.70;
+    ctx.lineWidth=7; ctx.shadowBlur=14; ctx.shadowColor=skin.glow; ctx.stroke();
+
+    // Pass 3: bright white core line
+    ctx.beginPath();
+    ctx.moveTo(this.pts[0].x,this.pts[0].y);
+    for(let i=1;i<this.pts.length;i++) ctx.lineTo(this.pts[i].x,this.pts[i].y);
+    ctx.strokeStyle='#ffffff'; ctx.globalAlpha=0.90;
+    ctx.lineWidth=2.5; ctx.shadowBlur=8; ctx.shadowColor='#ffffff'; ctx.stroke();
+
     ctx.restore();
   }
 }
