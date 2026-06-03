@@ -146,18 +146,19 @@ const PLAY_H    = PLAY_BOT - PLAY_TOP;
 const PLAYER_X  = 130;
 const WAVE_SPD  = 4.2;   // diagonal travel speed (px/frame)
 const PLAYER_R  = 9;     // collision radius
+const SPIKE_H   = 18;    // effective spike collision height from wall edge
 
 // Corridor constraints
-const MIN_HALF_GAP  = 28;   // absolute minimum half-gap (56px total, player is ~18px)
-const START_HALF_GAP= 110;  // starting half-gap
+const MIN_HALF_GAP  = 46;   // absolute minimum half-gap (must exceed SPIKE_H*2 + player clearance)
+const START_HALF_GAP= 130;  // starting half-gap
 const WALL_MIN_Y    = 14;   // top wall can reach this close to screen top
 const WALL_MAX_Y    = BASE_H - 14; // bottom wall
 
 // ── Difficulty ────────────────────────────────────────────────────────────────
 const DIFFS = {
-  easy:   { scroll:3.5, gapStart:130, gapFloor:55,  coinRate:0.30 },
-  normal: { scroll:5.0, gapStart:110, gapFloor:38,  coinRate:0.18 },
-  hard:   { scroll:6.5, gapStart:90,  gapFloor:28,  coinRate:0.10 },
+  easy:   { scroll:3.0, gapStart:150, gapFloor:65,  coinRate:0.35 },
+  normal: { scroll:4.5, gapStart:130, gapFloor:52,  coinRate:0.20 },
+  hard:   { scroll:6.0, gapStart:100, gapFloor:46,  coinRate:0.10 },
 };
 let difficulty = 'normal';
 
@@ -201,30 +202,34 @@ function sampleCorridor(nodes, wx) {
 function makeSection(startX, startTopY, startBotY, score) {
   const cfg = DIFFS[difficulty];
   // How narrow can the gap be at this score level?
-  const progress = Math.min(1, score / 800);
+  const progress = Math.min(1, score / 1500);
   const minHG = clamp(
-    lerp(cfg.gapStart * 0.5, cfg.gapFloor, progress),
+    lerp(cfg.gapStart * 0.55, cfg.gapFloor, progress),
     cfg.gapFloor, cfg.gapStart
   );
   const maxHG = clamp(
-    lerp(cfg.gapStart, cfg.gapStart * 0.6, progress),
+    lerp(cfg.gapStart, cfg.gapStart * 0.65, progress),
     minHG + 20, cfg.gapStart
   );
 
   const currentCY = (startTopY + startBotY) / 2;
   const currentHG = (startBotY - startTopY) / 2;
 
-  // Pick section type based on score / randomness
+  // Pick section type based on score / randomness — easy start, gradually harder
   const rand = Math.random();
   let type;
-  if (score < 50)        type = 'flat';         // very beginning: flat wide
-  else if (score < 120)  type = rand<0.5?'rise':'fall';
-  else if (rand < 0.20)  type = 'flat';
-  else if (rand < 0.42)  type = 'rise';
-  else if (rand < 0.64)  type = 'fall';
-  else if (rand < 0.78)  type = 'zigzag';
-  else if (rand < 0.90)  type = 'narrow';
-  else                   type = 'recovery';
+  if (score < 100)       type = 'flat';
+  else if (score < 250)  type = rand<0.5?'rise':'fall';
+  else if (score < 450) {
+    if (rand < 0.30)      type = 'flat';
+    else if (rand < 0.65) type = 'rise';
+    else                  type = 'fall';
+  } else if (rand < 0.15)  type = 'flat';
+  else if (rand < 0.37)    type = 'rise';
+  else if (rand < 0.59)    type = 'fall';
+  else if (rand < 0.73)    type = 'zigzag';
+  else if (rand < 0.87)    type = 'narrow';
+  else                     type = 'recovery';
 
   // Section horizontal length (how many px wide)
   const secLen = 120 + Math.random() * 160;
@@ -419,7 +424,7 @@ class Game {
     this.pressing = false;
     this.alive = true;
     this.deathTimer = 0;
-    this.graceFrames = 70; // invincible at start
+    this.graceFrames = 150; // invincible at start
 
     // Corridor node list (world-space x coordinates)
     this.nodes = [];
@@ -432,13 +437,16 @@ class Game {
   }
 
   _seedOpening() {
-    // First 400px: flat wide corridor, centered
-    const hg = DIFFS[difficulty].gapStart;
+    // First 1200px: tapers from very wide entry down to gapStart
+    const startHG = 165; // extra wide so player can learn the controls safely
+    const endHG = DIFFS[difficulty].gapStart;
     const cy = BASE_H / 2;
-    for (let x=0; x<=400; x+=40) {
+    for (let x=0; x<=1200; x+=40) {
+      const t = x / 1200;
+      const hg = lerp(startHG, endHG, t * t); // ease-in taper
       this.nodes.push({ x, topY: cy-hg, botY: cy+hg });
     }
-    this._genX = 400;
+    this._genX = 1200;
   }
 
   _extendCorridor() {
@@ -508,10 +516,10 @@ class Game {
     }
     this.coins = this.coins.filter(c => (c.x - (this.distance - PLAYER_X)) > -40);
 
-    // Collision: sample corridor at player world x
+    // Collision: sample corridor at player world x (spikes reduce navigable space)
     if (this.graceFrames <= 0) {
       const { topY, botY } = sampleCorridor(this.nodes, this.distance);
-      if (this.py - PLAYER_R < topY || this.py + PLAYER_R > botY) {
+      if (this.py - PLAYER_R < topY + SPIKE_H || this.py + PLAYER_R > botY - SPIKE_H) {
         this._die(); return;
       }
     }
