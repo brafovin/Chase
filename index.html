@@ -133,21 +133,23 @@ const clamp=(v,lo,hi)=>Math.max(lo,Math.min(hi,v));
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const PX=130;          // player fixed screen x
-const WAVE_SPD=3.0;    // vertical speed (px/frame)
+const WAVE_SPD=3.8;    // vertical speed — fast enough to see diagonal movement clearly
 const PR=8;            // player collision radius
-const TOOTH_W=56;      // spike base width  — large teeth like reference images
-const TOOTH_H=50;      // spike height into gap  (visual + collision boundary)
-// MIN_HG: half-gap must fit tooth + player + tooth:  TOOTH_H + PR + margin = 50+8+10 = 68
-const MIN_HG=70;       // absolute minimum half-gap (140px raw = 40px effective after teeth)
+const TOOTH_W=110;     // wide tooth base — matches reference images (few large peaks, not many small)
+const TOOTH_H=68;      // tall tooth height for sharp mountain-peak look
+// MIN_HG: must fit TOOTH_H + player clearance. TOOTH_H+PR+margin = 68+8+14 = 90
+const MIN_HG=92;       // absolute minimum half-gap
 const WALL_PAD=6;      // min wall edge from screen top/bottom
 
 // ── Difficulty ────────────────────────────────────────────────────────────────
 // gapS/gapF are half-gap values. Effective playable = (gapF*2) - (TOOTH_H*2).
 // normal gapF=80 → raw 160px → effective 60px. Tight but fair.
+// gapF must be > MIN_HG (92). Effective play zone = gapF*2 - TOOTH_H*2
+// easy gapF=115 → 230px raw → 94px effective. normal gapF=105 → 74px. hard gapF=95 → 54px.
 const DIFFS={
-  easy:  {spd0:1.8,spd1:3.2,gapS:180,gapF:95,  coins:0.28},
-  normal:{spd0:2.0,spd1:5.0,gapS:160,gapF:80,  coins:0.16},
-  hard:  {spd0:2.5,spd1:6.5,gapS:140,gapF:70,  coins:0.10},
+  easy:  {spd0:1.8,spd1:3.2,gapS:200,gapF:115, coins:0.28},
+  normal:{spd0:2.0,spd1:5.0,gapS:180,gapF:105, coins:0.16},
+  hard:  {spd0:2.5,spd1:6.5,gapS:160,gapF:95,  coins:0.10},
 };
 let difficulty='normal';
 
@@ -287,26 +289,36 @@ class Particle{
 // ── Trail ─────────────────────────────────────────────────────────────────────
 class Trail{
   constructor(){this.pts=[];}
-  add(x,y){this.pts.push({x,y});if(this.pts.length>28)this.pts.shift();}
+  add(x,y){this.pts.push({x,y});if(this.pts.length>38)this.pts.shift();}
   draw(skin){
     if(this.pts.length<2)return;
     ctx.save();ctx.lineCap='round';ctx.lineJoin='round';
-    // Outer glow pass
-    ctx.shadowBlur=0;
-    for(let pass=0;pass<2;pass++){
-      const isGlow=pass===0;
-      for(let i=1;i<this.pts.length;i++){
-        const t=i/this.pts.length;
-        ctx.beginPath();
-        ctx.moveTo(this.pts[i-1].x,this.pts[i-1].y);
-        ctx.lineTo(this.pts[i].x,this.pts[i].y);
-        if(isGlow){
-          ctx.strokeStyle=skin.glow;ctx.globalAlpha=t*0.35;ctx.lineWidth=t*12;
-        } else {
-          ctx.strokeStyle=skin.primary;ctx.globalAlpha=t*0.85;ctx.lineWidth=t*4;
-        }
-        ctx.stroke();
-      }
+    // Pass 1: wide outer glow (shows the diagonal path the ship just travelled)
+    for(let i=1;i<this.pts.length;i++){
+      const t=i/this.pts.length;
+      ctx.beginPath();
+      ctx.moveTo(this.pts[i-1].x,this.pts[i-1].y);
+      ctx.lineTo(this.pts[i].x,this.pts[i].y);
+      ctx.strokeStyle=skin.glow; ctx.globalAlpha=t*0.25; ctx.lineWidth=t*20;
+      ctx.shadowBlur=0; ctx.stroke();
+    }
+    // Pass 2: medium bright line
+    for(let i=1;i<this.pts.length;i++){
+      const t=i/this.pts.length;
+      ctx.beginPath();
+      ctx.moveTo(this.pts[i-1].x,this.pts[i-1].y);
+      ctx.lineTo(this.pts[i].x,this.pts[i].y);
+      ctx.strokeStyle=skin.primary; ctx.globalAlpha=t*0.7; ctx.lineWidth=t*6;
+      ctx.stroke();
+    }
+    // Pass 3: bright white core
+    for(let i=1;i<this.pts.length;i++){
+      const t=i/this.pts.length;
+      ctx.beginPath();
+      ctx.moveTo(this.pts[i-1].x,this.pts[i-1].y);
+      ctx.lineTo(this.pts[i].x,this.pts[i].y);
+      ctx.strokeStyle='#ffffff'; ctx.globalAlpha=t*0.5; ctx.lineWidth=t*2;
+      ctx.stroke();
     }
     ctx.restore();
   }
@@ -381,122 +393,95 @@ function sampleSX(nodes,sx){
   return{topY:last.topY,botY:last.botY};
 }
 
-// ── Draw: massive spike-wall polygons like reference images ───────────────────
+// ── Draw: solid zigzag walls matching reference images ────────────────────────
 function drawWalls(nodes,dist){
   if(nodes.length<2) return;
 
-  // Work from a bit off-screen left to a bit off-screen right
-  const x0=nodes[0].sx-TOOTH_W*2;
-  const xN=nodes[nodes.length-1].sx+TOOTH_W*2;
+  const x0=nodes[0].sx - TOOTH_W*2;
+  const xN=nodes[nodes.length-1].sx + TOOTH_W*2;
 
-  // Build polygon points for top wall inner edge (zigzag teeth pointing DOWN)
-  // and bottom wall inner edge (zigzag teeth pointing UP)
+  // Sample the corridor edge at each tooth boundary and midpoint
+  // topPts / botPts are the inner-edge polylines (the jagged boundary)
+  // Pattern per tooth: left-base, tip, right-base (no duplicate points — each tooth shares
+  // its right-base with the next tooth's left-base, so we only push left-base + tip per tooth,
+  // then add the final right-base at the end)
   const topPts=[], botPts=[];
-  const step=TOOTH_W;
-  for(let sx=x0;sx<=xN;sx+=step){
-    const baseR=sampleSX(nodes,sx);
-    const baseMid=sampleSX(nodes,sx+step*0.5);
-    const baseL=sampleSX(nodes,sx+step);
-    // Top: base at topY, tip pointing down
-    topPts.push(
-      {x:sx,         y:baseR.topY},
-      {x:sx+step*0.5,y:baseMid.topY+TOOTH_H},  // tip
-      {x:sx+step,    y:baseL.topY},
-    );
-    // Bottom: base at botY, tip pointing up
-    botPts.push(
-      {x:sx,         y:baseR.botY},
-      {x:sx+step*0.5,y:baseMid.botY-TOOTH_H},  // tip
-      {x:sx+step,    y:baseL.botY},
-    );
+  for(let sx=x0; sx<xN; sx+=TOOTH_W){
+    const L=sampleSX(nodes,sx);
+    const M=sampleSX(nodes,sx+TOOTH_W*0.5);
+    topPts.push({x:sx,            y:L.topY});          // base left
+    topPts.push({x:sx+TOOTH_W*0.5,y:M.topY+TOOTH_H}); // tip (points DOWN into gap)
+    botPts.push({x:sx,            y:L.botY});           // base left
+    botPts.push({x:sx+TOOTH_W*0.5,y:M.botY-TOOTH_H}); // tip (points UP into gap)
   }
+  // Close the last tooth's right base
+  const finalR=sampleSX(nodes,xN);
+  topPts.push({x:xN, y:finalR.topY});
+  botPts.push({x:xN, y:finalR.botY});
 
   ctx.save();
 
-  // ── Top wall filled polygon ────────────────────────────────────────────────
-  ctx.beginPath();
-  ctx.moveTo(x0,-4);
-  ctx.lineTo(xN,-4);
-  // Trace inner edge right→left
-  for(let i=topPts.length-1;i>=0;i--) ctx.lineTo(topPts[i].x,topPts[i].y);
-  ctx.closePath();
+  // Helper: fill a wall polygon (outer edge = screen edge, inner = jagged polyline)
+  function fillWall(pts, screenEdgeY, isTop){
+    ctx.beginPath();
+    // Start at top/bottom screen edge, left side
+    ctx.moveTo(x0, screenEdgeY);
+    // Walk along the inner jagged edge left→right
+    for(const p of pts) ctx.lineTo(p.x, p.y);
+    // Close back to screen edge, right side
+    ctx.lineTo(xN, screenEdgeY);
+    ctx.closePath();
 
-  // Brick fill
-  if(brickCache){
-    const pat=ctx.createPattern(brickCache,'repeat');
-    const m=new DOMMatrix(); m.translateSelf(-((dist)%brickCache.width),0);
-    pat.setTransform(m); ctx.fillStyle=pat;
-  } else ctx.fillStyle='#0a2a3a';
-  ctx.fill();
-  // Darken overlay for depth
-  ctx.beginPath();
-  ctx.moveTo(x0,-4); ctx.lineTo(xN,-4);
-  for(let i=topPts.length-1;i>=0;i--) ctx.lineTo(topPts[i].x,topPts[i].y);
-  ctx.closePath();
-  ctx.fillStyle='rgba(0,10,20,0.50)'; ctx.fill();
+    // Brick texture fill
+    if(brickCache){
+      const pat=ctx.createPattern(brickCache,'repeat');
+      const m=new DOMMatrix(); m.translateSelf(-(dist%brickCache.width),0);
+      pat.setTransform(m); ctx.fillStyle=pat;
+    } else ctx.fillStyle='#0a2a3a';
+    ctx.fill();
 
-  // ── Bottom wall filled polygon ─────────────────────────────────────────────
-  ctx.beginPath();
-  ctx.moveTo(x0,H+4);
-  ctx.lineTo(xN,H+4);
-  for(let i=botPts.length-1;i>=0;i--) ctx.lineTo(botPts[i].x,botPts[i].y);
-  ctx.closePath();
-  if(brickCache){
-    const pat=ctx.createPattern(brickCache,'repeat');
-    const m=new DOMMatrix(); m.translateSelf(-((dist)%brickCache.width),0);
-    pat.setTransform(m); ctx.fillStyle=pat;
-  } else ctx.fillStyle='#0a2a3a';
-  ctx.fill();
-  ctx.beginPath();
-  ctx.moveTo(x0,H+4); ctx.lineTo(xN,H+4);
-  for(let i=botPts.length-1;i>=0;i--) ctx.lineTo(botPts[i].x,botPts[i].y);
-  ctx.closePath();
-  ctx.fillStyle='rgba(0,10,20,0.50)'; ctx.fill();
-
-  // ── Glowing inner edge — 3 passes (wide halo → mid glow → bright edge) ────
-  // Build the jagged polyline paths once, stroke 3 times
-  function strokeEdge(pts,passes){
-    for(const p of passes){
-      ctx.beginPath();
-      for(let i=0;i<pts.length;i++) i===0?ctx.moveTo(pts[i].x,pts[i].y):ctx.lineTo(pts[i].x,pts[i].y);
-      ctx.globalAlpha=p.a; ctx.lineWidth=p.w;
-      ctx.strokeStyle=p.col; ctx.shadowBlur=p.sb; ctx.shadowColor=p.col;
-      ctx.lineJoin='miter'; ctx.miterLimit=8;
-      ctx.stroke();
-    }
+    // Dark overlay so bricks sit behind the glow
+    ctx.beginPath();
+    ctx.moveTo(x0,screenEdgeY);
+    for(const p of pts) ctx.lineTo(p.x,p.y);
+    ctx.lineTo(xN,screenEdgeY); ctx.closePath();
+    ctx.fillStyle='rgba(0,8,18,0.52)'; ctx.fill();
   }
-  const passes=[
-    {w:14, a:0.08, col:'#00ddff', sb:0},
-    {w:5,  a:0.35, col:'#00eeff', sb:12},
-    {w:1.8,a:1.0,  col:'#ccffff', sb:16},
+
+  fillWall(topPts, -4, true);
+  fillWall(botPts, H+4, false);
+
+  // ── Glow on inner jagged edge — 3 passes ──────────────────────────────────
+  // Pass 1: wide soft halo
+  // Pass 2: medium bright glow
+  // Pass 3: sharp bright white edge
+  const edgePasses=[
+    {lw:18, alpha:0.07, col:'#00ccff', sb:0},
+    {lw:5,  alpha:0.40, col:'#00eeff', sb:14},
+    {lw:2,  alpha:1.00, col:'#ddfaff', sb:18},
   ];
-  strokeEdge(topPts,passes);
-  strokeEdge(botPts,passes);
+  ctx.lineJoin='miter'; ctx.miterLimit=10; // keep peaks sharp, no rounding
+  for(const ep of edgePasses){
+    ctx.globalAlpha=ep.alpha; ctx.lineWidth=ep.lw;
+    ctx.strokeStyle=ep.col; ctx.shadowBlur=ep.sb; ctx.shadowColor=ep.col;
+    // top edge
+    ctx.beginPath();
+    for(let i=0;i<topPts.length;i++) i===0?ctx.moveTo(topPts[i].x,topPts[i].y):ctx.lineTo(topPts[i].x,topPts[i].y);
+    ctx.stroke();
+    // bottom edge
+    ctx.beginPath();
+    for(let i=0;i<botPts.length;i++) i===0?ctx.moveTo(botPts[i].x,botPts[i].y):ctx.lineTo(botPts[i].x,botPts[i].y);
+    ctx.stroke();
+  }
 
   ctx.globalAlpha=1; ctx.shadowBlur=0;
-
-  // ── Bright spike tip highlights ────────────────────────────────────────────
-  ctx.fillStyle='#ffffff'; ctx.shadowBlur=12; ctx.shadowColor='#aaffff';
-  for(let i=1;i<topPts.length;i+=3){  // every tip point (index 1,4,7,...)
-    const p=topPts[i];
-    if(p.x>-4&&p.x<W+4){
-      ctx.beginPath();ctx.arc(p.x,p.y,2.5,0,Math.PI*2);ctx.fill();
-    }
-  }
-  for(let i=1;i<botPts.length;i+=3){
-    const p=botPts[i];
-    if(p.x>-4&&p.x<W+4){
-      ctx.beginPath();ctx.arc(p.x,p.y,2.5,0,Math.PI*2);ctx.fill();
-    }
-  }
-  ctx.shadowBlur=0;
-
   ctx.restore();
 }
 
 // ── Draw: player ship ─────────────────────────────────────────────────────────
 function drawPlayer(py,pressing,skin,alpha,grace){
-  const angle=(pressing?-1:1)*0.38;
+  // Steep tilt so the ship visually shows diagonal movement direction
+  const angle=(pressing?-1:1)*0.52;
   const blink=grace?(0.4+0.6*Math.abs(Math.sin(Date.now()*0.018))):1;
   ctx.save();
   ctx.globalAlpha=alpha*blink;
