@@ -135,21 +135,21 @@ const clamp=(v,lo,hi)=>Math.max(lo,Math.min(hi,v));
 const PX=130;          // player fixed screen x
 const WAVE_SPD=3.8;    // vertical speed — fast enough to see diagonal movement clearly
 const PR=8;            // player collision radius
-const TOOTH_W=110;     // wide tooth base — matches reference images (few large peaks, not many small)
-const TOOTH_H=68;      // tall tooth height for sharp mountain-peak look
-// MIN_HG: must fit TOOTH_H + player clearance. TOOTH_H+PR+margin = 68+8+14 = 90
-const MIN_HG=92;       // absolute minimum half-gap
+const TOOTH_W=220;     // ~3-4 peaks visible on screen at once, like reference images
+const TOOTH_H=100;     // tall sharp peaks
+// MIN_HG: TOOTH_H + PR + margin = 100+8+16 = 124
+const MIN_HG=126;      // absolute minimum half-gap
 const WALL_PAD=6;      // min wall edge from screen top/bottom
 
 // ── Difficulty ────────────────────────────────────────────────────────────────
 // gapS/gapF are half-gap values. Effective playable = (gapF*2) - (TOOTH_H*2).
 // normal gapF=80 → raw 160px → effective 60px. Tight but fair.
-// gapF must be > MIN_HG (92). Effective play zone = gapF*2 - TOOTH_H*2
-// easy gapF=115 → 230px raw → 94px effective. normal gapF=105 → 74px. hard gapF=95 → 54px.
+// gapF > MIN_HG (126). Effective play zone = gapF*2 - TOOTH_H*2
+// easy gapF=150 → 300px raw → 100px effective. normal=140 → 80px. hard=130 → 60px.
 const DIFFS={
-  easy:  {spd0:1.8,spd1:3.2,gapS:200,gapF:115, coins:0.28},
-  normal:{spd0:2.0,spd1:5.0,gapS:180,gapF:105, coins:0.16},
-  hard:  {spd0:2.5,spd1:6.5,gapS:160,gapF:95,  coins:0.10},
+  easy:  {spd0:1.8,spd1:3.2,gapS:210,gapF:150, coins:0.28},
+  normal:{spd0:2.0,spd1:5.0,gapS:190,gapF:140, coins:0.16},
+  hard:  {spd0:2.5,spd1:6.5,gapS:170,gapF:130, coins:0.10},
 };
 let difficulty='normal';
 
@@ -590,9 +590,9 @@ class Game{
   _seed(){
     const cfg=DIFFS[difficulty];
     const hg=cfg.gapS+30, cy=H/2;
-    // 800px of wide flat opening
-    for(let x=0;x<=800;x+=TOOTH_W) this.nodes.push({x,topY:cy-hg,botY:cy+hg});
-    this._genX=800;
+    // 1000px of wide flat opening
+    for(let x=0;x<=1000;x+=TOOTH_W) this.nodes.push({x,topY:cy-hg,botY:cy+hg});
+    this._genX=1000;
   }
 
   _extend(){
