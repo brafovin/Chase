@@ -146,18 +146,21 @@ const PLAY_H    = PLAY_BOT - PLAY_TOP;
 const PLAYER_X  = 130;
 const WAVE_SPD  = 4.2;   // diagonal travel speed (px/frame)
 const PLAYER_R  = 9;     // collision radius
+const SPIKE_H   = 18;    // spike height — spikes are deadly, included in collision boundary
 
 // Corridor constraints
-const MIN_HALF_GAP  = 28;   // absolute minimum half-gap (56px total, player is ~18px)
-const START_HALF_GAP= 110;  // starting half-gap
-const WALL_MIN_Y    = 14;   // top wall can reach this close to screen top
-const WALL_MAX_Y    = BASE_H - 14; // bottom wall
+// Raw gap must fit: spike top (SPIKE_H) + player diameter (PLAYER_R*2) + spike bottom (SPIKE_H)
+// Minimum raw half-gap = SPIKE_H + PLAYER_R + margin = 18+9+8 = 35 → use 38 for safety
+const MIN_HALF_GAP  = 38;  // absolute minimum half-gap ever spawned
+const WALL_MIN_Y    = 10;  // top wall inner edge can come this close to screen top
+const WALL_MAX_Y    = BASE_H - 10;
 
 // ── Difficulty ────────────────────────────────────────────────────────────────
 const DIFFS = {
-  easy:   { scroll:3.5, gapStart:130, gapFloor:55,  coinRate:0.30 },
-  normal: { scroll:5.0, gapStart:110, gapFloor:38,  coinRate:0.18 },
-  hard:   { scroll:6.5, gapStart:90,  gapFloor:28,  coinRate:0.10 },
+  //               scrollStart = initial speed, scroll = target speed after ~score 400
+  easy:   { scrollStart:2.0, scroll:3.5, gapStart:160, gapFloor:62,  coinRate:0.30 },
+  normal: { scrollStart:2.2, scroll:5.0, gapStart:140, gapFloor:50,  coinRate:0.18 },
+  hard:   { scrollStart:2.5, scroll:6.5, gapStart:115, gapFloor:40,  coinRate:0.10 },
 };
 let difficulty = 'normal';
 
@@ -200,125 +203,143 @@ function sampleCorridor(nodes, wx) {
 
 function makeSection(startX, startTopY, startBotY, score) {
   const cfg = DIFFS[difficulty];
-  // How narrow can the gap be at this score level?
-  const progress = Math.min(1, score / 800);
-  const minHG = clamp(
-    lerp(cfg.gapStart * 0.5, cfg.gapFloor, progress),
-    cfg.gapFloor, cfg.gapStart
-  );
-  const maxHG = clamp(
-    lerp(cfg.gapStart, cfg.gapStart * 0.6, progress),
-    minHG + 20, cfg.gapStart
-  );
+
+  // Difficulty progress: 0 at start, 1 at score 1000
+  const progress = Math.min(1, score / 1000);
+
+  // How tight can the gap get? Always >= MIN_HALF_GAP
+  const minHG = Math.max(MIN_HALF_GAP, Math.round(lerp(cfg.gapStart * 0.85, cfg.gapFloor, progress)));
+  const maxHG = Math.max(minHG + 15, Math.round(lerp(cfg.gapStart, cfg.gapStart * 0.65, progress)));
 
   const currentCY = (startTopY + startBotY) / 2;
   const currentHG = (startBotY - startTopY) / 2;
 
-  // Pick section type based on score / randomness
+  // ── Type selection: very gradual difficulty curve ────────────────────────
+  // Stages (by score):
+  //   0–100   : flat only
+  //   100–250 : flat + gentle rise/fall (no zigzag, no narrow)
+  //   250–450 : flat + rise/fall + recovery, zigzag introduced late in range
+  //   450–700 : all types, narrow still rare
+  //   700+    : full mix including frequent narrow/zigzag
   const rand = Math.random();
   let type;
-  if (score < 50)        type = 'flat';         // very beginning: flat wide
-  else if (score < 120)  type = rand<0.5?'rise':'fall';
-  else if (rand < 0.20)  type = 'flat';
-  else if (rand < 0.42)  type = 'rise';
-  else if (rand < 0.64)  type = 'fall';
-  else if (rand < 0.78)  type = 'zigzag';
-  else if (rand < 0.90)  type = 'narrow';
-  else                   type = 'recovery';
+  if (score < 100) {
+    type = 'flat';
+  } else if (score < 250) {
+    // Mostly flat, gentle rises/falls
+    if (rand < 0.45) type = 'flat';
+    else if (rand < 0.72) type = 'rise';
+    else if (rand < 0.95) type = 'fall';
+    else type = 'recovery';
+  } else if (score < 450) {
+    if (rand < 0.20) type = 'flat';
+    else if (rand < 0.42) type = 'rise';
+    else if (rand < 0.64) type = 'fall';
+    else if (rand < 0.82) type = 'recovery';
+    else if (rand < 0.96) type = 'zigzag';   // zigzag introduced
+    else type = 'narrow';                      // narrow very rare
+  } else if (score < 700) {
+    if (rand < 0.12) type = 'flat';
+    else if (rand < 0.30) type = 'rise';
+    else if (rand < 0.48) type = 'fall';
+    else if (rand < 0.65) type = 'zigzag';
+    else if (rand < 0.82) type = 'recovery';
+    else type = 'narrow';
+  } else {
+    // Full intensity
+    if (rand < 0.10) type = 'flat';
+    else if (rand < 0.26) type = 'rise';
+    else if (rand < 0.42) type = 'fall';
+    else if (rand < 0.62) type = 'zigzag';
+    else if (rand < 0.78) type = 'narrow';
+    else type = 'recovery';
+  }
 
-  // Section horizontal length (how many px wide)
-  const secLen = 120 + Math.random() * 160;
-  const nodeCount = Math.max(2, Math.floor(secLen / 30));
+  // Section length: longer early (easier to read), shorter later (faster decisions)
+  const secLen = lerp(200, 130, progress) + Math.random() * lerp(120, 60, progress);
+  const nodeCount = Math.max(3, Math.floor(secLen / 28));
   const nodes = [];
 
-  // Helper to build nodes from a center-Y path + half-gap path
+  // Current scroll speed at this point in the run (used to compute reachable vertical travel)
+  const scrollSpd = lerp(cfg.scrollStart, cfg.scroll, Math.min(1, score/400)) + Math.max(0,score-400)*0.001;
+  const framesInSection = secLen / scrollSpd;
+  // Maximum the player can realistically travel vertically through this section
+  const maxVertical = WAVE_SPD * framesInSection * 0.65;
+
   function buildFromPath(cyPath, hgPath) {
     for (let i=0; i<nodeCount; i++) {
       const t = nodeCount<=1 ? 0 : i/(nodeCount-1);
-      const cy = clamp(cyPath(t), WALL_MIN_Y + 40, WALL_MAX_Y - 40);
       const hg = clamp(hgPath(t), minHG, maxHG);
+      const cy = clamp(cyPath(t), WALL_MIN_Y + hg + 8, WALL_MAX_Y - hg - 8);
       const topY = clamp(cy - hg, WALL_MIN_Y, WALL_MAX_Y - hg*2);
       const botY = topY + hg*2;
       nodes.push({ x: startX + t * secLen, topY, botY });
     }
   }
 
-  // Choose a reachable target center based on wave speed & section length
-  // Max vertical travel in secLen pixels at scroll speed:
-  const scrollSpd = cfg.scroll + score * 0.0015;
-  const framesInSection = secLen / scrollSpd;
-  const maxVertical = WAVE_SPD * framesInSection * 0.75; // 75% of max to be fair
-
-  switch(type) {
+  switch (type) {
     case 'flat': {
-      // Keep center constant, slightly vary gap
-      const targetHG = lerp(currentHG, (minHG+maxHG)*0.5, 0.4);
-      buildFromPath(
-        () => currentCY,
-        t => lerp(currentHG, targetHG, t)
-      );
+      // Constant center, very gentle gap transition
+      const targetHG = lerp(currentHG, (minHG + maxHG) * 0.55, 0.35);
+      buildFromPath(() => currentCY, t => lerp(currentHG, targetHG, t));
       break;
     }
     case 'rise': {
-      // Corridor center moves upward — player needs to hold
-      const delta = Math.min(maxVertical * 0.55, BASE_H * 0.28);
-      const targetCY = clamp(currentCY - delta, WALL_MIN_Y + minHG + 10, WALL_MAX_Y - minHG - 10);
-      const targetHG = lerp(currentHG, (minHG+maxHG)*0.55, 0.5);
+      // Corridor shifts upward — player must hold
+      // Limit shift to 60% of what the player CAN travel, always reachable
+      const delta = Math.min(maxVertical * 0.52, BASE_H * 0.22);
+      const targetCY = clamp(currentCY - delta, WALL_MIN_Y + minHG + 12, WALL_MAX_Y - minHG - 12);
+      const targetHG = lerp(currentHG, (minHG + maxHG) * 0.58, 0.45);
       buildFromPath(t => lerp(currentCY, targetCY, t), t => lerp(currentHG, targetHG, t));
       break;
     }
     case 'fall': {
-      const delta = Math.min(maxVertical * 0.55, BASE_H * 0.28);
-      const targetCY = clamp(currentCY + delta, WALL_MIN_Y + minHG + 10, WALL_MAX_Y - minHG - 10);
-      const targetHG = lerp(currentHG, (minHG+maxHG)*0.55, 0.5);
+      const delta = Math.min(maxVertical * 0.52, BASE_H * 0.22);
+      const targetCY = clamp(currentCY + delta, WALL_MIN_Y + minHG + 12, WALL_MAX_Y - minHG - 12);
+      const targetHG = lerp(currentHG, (minHG + maxHG) * 0.58, 0.45);
       buildFromPath(t => lerp(currentCY, targetCY, t), t => lerp(currentHG, targetHG, t));
       break;
     }
     case 'zigzag': {
-      // Center oscillates — requires alternating inputs
-      const amp = Math.min(maxVertical * 0.4, BASE_H * 0.2);
-      const freq = 1.5 + Math.random();
+      // Oscillating center — needs alternating input. Amplitude is reachable.
+      const amp = Math.min(maxVertical * 0.38, BASE_H * 0.16);
+      const freq = 1.2 + Math.random() * 0.8;
       buildFromPath(
         t => clamp(currentCY + Math.sin(t * Math.PI * freq) * amp,
-                   WALL_MIN_Y + minHG + 8, WALL_MAX_Y - minHG - 8),
-        t => lerp(currentHG, (minHG+maxHG)*0.55, Math.sin(t*Math.PI))
+                   WALL_MIN_Y + minHG + 10, WALL_MAX_Y - minHG - 10),
+        t => lerp(currentHG, (minHG + maxHG) * 0.52, Math.abs(Math.sin(t * Math.PI)))
       );
       break;
     }
     case 'narrow': {
-      // Gap tightens then widens — precision moment
-      const tightHG = clamp(minHG + (maxHG-minHG)*0.15, minHG, maxHG*0.4);
+      // Gap squeezes to minHG at center then widens — precision passage
+      // Only spawns after score 450 so player knows the controls
+      const tightHG = clamp(minHG + (maxHG - minHG) * 0.12, minHG, maxHG * 0.45);
       buildFromPath(
-        () => currentCY,
-        t => {
-          const squeeze = Math.sin(t * Math.PI); // peaks at middle
-          return lerp(currentHG, tightHG, squeeze);
-        }
+        () => clamp(currentCY, WALL_MIN_Y + tightHG + 10, WALL_MAX_Y - tightHG - 10),
+        t => lerp(currentHG, tightHG, Math.sin(t * Math.PI))
       );
       break;
     }
     case 'recovery': {
-      // Wide gap, center moves toward middle — breathing room
-      const midCY = PLAY_H / 2;
-      const recovHG = clamp(maxHG * 0.85, minHG, maxHG);
-      buildFromPath(
-        t => lerp(currentCY, midCY, t*0.6),
-        t => lerp(currentHG, recovHG, t)
-      );
+      // Wide gap drifts toward screen center — breather after a hard section
+      const midCY = BASE_H / 2;
+      const recovHG = clamp(maxHG * 0.88, minHG + 20, maxHG);
+      buildFromPath(t => lerp(currentCY, midCY, t * 0.55), t => lerp(currentHG, recovHG, t));
       break;
     }
     default: {
-      nodes.push({ x: startX, topY: startTopY, botY: startBotY });
-      nodes.push({ x: startX + secLen, topY: startTopY, botY: startBotY });
+      nodes.push({ x: startX,           topY: startTopY, botY: startBotY });
+      nodes.push({ x: startX + secLen,  topY: startTopY, botY: startBotY });
     }
   }
 
-  // Validate: ensure every node is physically sane
+  // ── Validate every node: never impossible, always includes spike clearance ─
+  const minRawGap = MIN_HALF_GAP * 2; // guarantees spike + player + spike fits
   for (const n of nodes) {
-    n.topY = clamp(n.topY, WALL_MIN_Y, WALL_MAX_Y - MIN_HALF_GAP*2);
-    n.botY = clamp(n.botY, n.topY + MIN_HALF_GAP*2, WALL_MAX_Y);
-    // Ensure gap is actually big enough
-    if (n.botY - n.topY < MIN_HALF_GAP*2) {
+    n.topY = clamp(n.topY, WALL_MIN_Y, WALL_MAX_Y - minRawGap);
+    n.botY = clamp(n.botY, n.topY + minRawGap, WALL_MAX_Y);
+    if (n.botY - n.topY < minRawGap) {
       const cy = (n.topY + n.botY) / 2;
       n.topY = cy - MIN_HALF_GAP;
       n.botY = cy + MIN_HALF_GAP;
@@ -419,26 +440,25 @@ class Game {
     this.pressing = false;
     this.alive = true;
     this.deathTimer = 0;
-    this.graceFrames = 70; // invincible at start
+    this.graceFrames = 160; // ~2.7s at 60fps — player learns controls before collisions active
 
     // Corridor node list (world-space x coordinates)
     this.nodes = [];
-    this._genX = 0; // world x of last generated node
+    this._genX = 0;
 
-    // Seed with a flat wide opening
     this._seedOpening();
-    // Pre-generate enough corridor
-    while (this._genX < BASE_W + 1200) this._extendCorridor();
+    while (this._genX < BASE_W + 1400) this._extendCorridor();
   }
 
   _seedOpening() {
-    // First 400px: flat wide corridor, centered
-    const hg = DIFFS[difficulty].gapStart;
+    const cfg = DIFFS[difficulty];
+    // Very wide opening for 900px so the player can orient before any real corridors
+    const hg = cfg.gapStart + 40; // extra wide beyond gapStart
     const cy = BASE_H / 2;
-    for (let x=0; x<=400; x+=40) {
-      this.nodes.push({ x, topY: cy-hg, botY: cy+hg });
+    for (let x = 0; x <= 900; x += 40) {
+      this.nodes.push({ x, topY: cy - hg, botY: cy + hg });
     }
-    this._genX = 400;
+    this._genX = 900;
   }
 
   _extendCorridor() {
@@ -466,9 +486,10 @@ class Game {
     }
     if (this.graceFrames>0) this.graceFrames--;
 
-    // Scroll speed ramp
+    // Scroll speed: start at scrollStart, ramp to cfg.scroll by score 400, then gently increase
     const cfg = DIFFS[difficulty];
-    this.scrollSpeed = cfg.scroll + this.score * 0.0018;
+    const baseSpeed = lerp(cfg.scrollStart, cfg.scroll, Math.min(1, this.score / 400));
+    this.scrollSpeed = baseSpeed + Math.max(0, this.score - 400) * 0.001;
 
     // True wave movement: instant diagonal direction
     const vy = this.pressing ? -WAVE_SPD : WAVE_SPD;
@@ -508,10 +529,13 @@ class Game {
     }
     this.coins = this.coins.filter(c => (c.x - (this.distance - PLAYER_X)) > -40);
 
-    // Collision: sample corridor at player world x
+    // Collision: sample corridor at player world x.
+    // Effective kill boundary includes spike tips projecting inward from each wall.
     if (this.graceFrames <= 0) {
       const { topY, botY } = sampleCorridor(this.nodes, this.distance);
-      if (this.py - PLAYER_R < topY || this.py + PLAYER_R > botY) {
+      const killTop = topY + SPIKE_H;  // touching a spike tip is fatal
+      const killBot = botY - SPIKE_H;
+      if (this.py - PLAYER_R < killTop || this.py + PLAYER_R > killBot) {
         this._die(); return;
       }
     }
