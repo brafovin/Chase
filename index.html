@@ -1,0 +1,1189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Geometric Dash – Flying Wave Challenge</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #1a0033;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      overflow: hidden;
+      font-family: 'Segoe UI', sans-serif;
+    }
+    canvas {
+      display: block;
+      image-rendering: pixelated;
+      cursor: pointer;
+    }
+    #ui {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+  </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+// ─── Canvas Setup ────────────────────────────────────────────────────────────
+const canvas = document.getElementById('c');
+const ctx    = canvas.getContext('2d');
+
+const BASE_W = 800, BASE_H = 450;
+let scale = 1;
+
+function resize() {
+  const sw = window.innerWidth  / BASE_W;
+  const sh = window.innerHeight / BASE_H;
+  scale = Math.min(sw, sh);
+  canvas.width  = BASE_W * scale;
+  canvas.height = BASE_H * scale;
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ─── Persistence ─────────────────────────────────────────────────────────────
+function save(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch(_) {} }
+function load(key, def) { try { const v = localStorage.getItem(key); return v !== null ? JSON.parse(v) : def; } catch(_) { return def; } }
+
+let highScore   = load('waveHS', 0);
+let coins       = load('waveCoins', 0);
+let unlockedSkins = load('waveSkins', [0]);
+let selectedSkin  = load('waveSkin', 0);
+let achievements  = load('waveAch', {});
+
+// ─── Constants ───────────────────────────────────────────────────────────────
+const GRAVITY_DOWN =  0.55;
+const GRAVITY_UP   = -0.55;
+const MAX_VY       =  5.5;
+const PLAYER_X     =  130;
+const GROUND_Y     =  BASE_H - 60;
+const CEIL_Y       =  40;
+const SPIKE_W      =  28;
+const SPIKE_H      =  28;
+const SCROLL_BASE  =  4.5;
+
+// ─── Skins ────────────────────────────────────────────────────────────────────
+const SKINS = [
+  { name: 'Classic',  cost: 0,    color: '#00eaff', glow: '#00eaff' },
+  { name: 'Inferno',  cost: 50,   color: '#ff4500', glow: '#ff6a00' },
+  { name: 'Venom',    cost: 100,  color: '#39ff14', glow: '#39ff14' },
+  { name: 'Royal',    cost: 150,  color: '#bf00ff', glow: '#df80ff' },
+  { name: 'Gold',     cost: 300,  color: '#ffd700', glow: '#ffe566' },
+];
+
+// ─── Achievements ─────────────────────────────────────────────────────────────
+const ACH_LIST = [
+  { id:'score100',  label:'Novice',      desc:'Reach score 100',    check: g => g.score >= 100 },
+  { id:'score500',  label:'Daredevil',   desc:'Reach score 500',    check: g => g.score >= 500 },
+  { id:'score1000', label:'Master Wave', desc:'Reach score 1000',   check: g => g.score >= 1000 },
+  { id:'coins10',   label:'Collector',   desc:'Collect 10 coins',   check: () => coins >= 10 },
+  { id:'coins50',   label:'Hoarder',     desc:'Collect 50 coins',   check: () => coins >= 50 },
+];
+
+function checkAchievements(game) {
+  let newAch = null;
+  for (const a of ACH_LIST) {
+    if (!achievements[a.id] && a.check(game)) {
+      achievements[a.id] = true;
+      save('waveAch', achievements);
+      newAch = a;
+    }
+  }
+  return newAch;
+}
+
+// ─── Audio ───────────────────────────────────────────────────────────────────
+const AudioCtx = window.AudioContext || window.webkitAudioContext;
+let audioCtx = null;
+function ensureAudio() { if (!audioCtx) audioCtx = new AudioCtx(); }
+
+function playClick() {
+  ensureAudio();
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.connect(g); g.connect(audioCtx.destination);
+  o.type = 'square';
+  o.frequency.setValueAtTime(880, audioCtx.currentTime);
+  o.frequency.exponentialRampToValueAtTime(440, audioCtx.currentTime + 0.08);
+  g.gain.setValueAtTime(0.15, audioCtx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.08);
+  o.start(); o.stop(audioCtx.currentTime + 0.08);
+}
+
+function playExplosion() {
+  ensureAudio();
+  const buf = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.3, audioCtx.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
+  const src = audioCtx.createBufferSource();
+  const g   = audioCtx.createGain();
+  src.buffer = buf; src.connect(g); g.connect(audioCtx.destination);
+  g.gain.setValueAtTime(0.4, audioCtx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.3);
+  src.start();
+}
+
+function playCoin() {
+  ensureAudio();
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.connect(g); g.connect(audioCtx.destination);
+  o.type = 'sine';
+  o.frequency.setValueAtTime(1200, audioCtx.currentTime);
+  o.frequency.exponentialRampToValueAtTime(2400, audioCtx.currentTime + 0.1);
+  g.gain.setValueAtTime(0.2, audioCtx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.12);
+  o.start(); o.stop(audioCtx.currentTime + 0.12);
+}
+
+// ─── Background Music ─────────────────────────────────────────────────────────
+let musicNodes = null;
+function startMusic() {
+  ensureAudio();
+  if (musicNodes) return;
+  const notes = [130.81, 146.83, 164.81, 174.61, 196, 220, 246.94, 261.63];
+  const pattern = [0,2,4,5,7,5,4,2, 0,2,4,7,9,7,4,2];
+  let step = 0;
+  const bpm = 160;
+  const interval = (60 / bpm) * 1000 * 0.5;
+  const master = audioCtx.createGain();
+  master.gain.value = 0.06;
+  master.connect(audioCtx.destination);
+
+  function playNote() {
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.connect(g); g.connect(master);
+    o.type = 'sawtooth';
+    const freq = notes[pattern[step % pattern.length] % notes.length];
+    o.frequency.value = freq;
+    const t = audioCtx.currentTime;
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(1, t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+    o.start(t); o.stop(t + 0.2);
+    step++;
+  }
+  const id = setInterval(playNote, interval);
+  musicNodes = { id, master };
+}
+
+function stopMusic() {
+  if (musicNodes) { clearInterval(musicNodes.id); musicNodes = null; }
+}
+
+// ─── Particle System ─────────────────────────────────────────────────────────
+class Particle {
+  constructor(x, y, color, vx, vy, life, size) {
+    this.x = x; this.y = y;
+    this.vx = vx; this.vy = vy;
+    this.life = life; this.maxLife = life;
+    this.size = size;
+    this.color = color;
+  }
+  update() {
+    this.x += this.vx; this.y += this.vy;
+    this.vy += 0.05;
+    this.life--;
+  }
+  draw(ctx) {
+    const alpha = this.life / this.maxLife;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = this.color;
+    ctx.shadowBlur = 6;
+    ctx.shadowColor = this.color;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.size * alpha, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+// ─── Trail System ─────────────────────────────────────────────────────────────
+class Trail {
+  constructor() { this.points = []; }
+  add(x, y) {
+    this.points.push({ x, y, age: 0 });
+    if (this.points.length > 22) this.points.shift();
+  }
+  update() { for (const p of this.points) p.age++; }
+  draw(ctx, color) {
+    if (this.points.length < 2) return;
+    ctx.save();
+    for (let i = 1; i < this.points.length; i++) {
+      const t = i / this.points.length;
+      ctx.beginPath();
+      ctx.moveTo(this.points[i-1].x, this.points[i-1].y);
+      ctx.lineTo(this.points[i].x,   this.points[i].y);
+      ctx.strokeStyle = color;
+      ctx.globalAlpha = t * 0.7;
+      ctx.lineWidth = t * 5;
+      ctx.shadowBlur = 10;
+      ctx.shadowColor = color;
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+// ─── Screen Shake ─────────────────────────────────────────────────────────────
+let shakeAmt = 0;
+function shake(amt) { shakeAmt = Math.max(shakeAmt, amt); }
+function applyShake() {
+  if (shakeAmt <= 0) return;
+  const dx = (Math.random() - 0.5) * shakeAmt * 2;
+  const dy = (Math.random() - 0.5) * shakeAmt * 2;
+  ctx.translate(dx, dy);
+  shakeAmt *= 0.8;
+  if (shakeAmt < 0.1) shakeAmt = 0;
+}
+
+// ─── Game State ───────────────────────────────────────────────────────────────
+const STATE = { MENU: 'menu', SKIN: 'skin', PLAY: 'play', PAUSE: 'pause', DEAD: 'dead', DIFF: 'diff' };
+let state = STATE.MENU;
+
+const DIFF_CONFIGS = {
+  easy:   { scroll: 3.5,  spikeGap: 220, coinFreq: 0.18 },
+  normal: { scroll: 4.5,  spikeGap: 170, coinFreq: 0.13 },
+  hard:   { scroll: 6.0,  spikeGap: 130, coinFreq: 0.09 },
+};
+let difficulty = 'normal';
+
+// ─── Game Object ──────────────────────────────────────────────────────────────
+class Game {
+  constructor() {
+    this.reset();
+  }
+
+  reset() {
+    const cfg = DIFF_CONFIGS[difficulty];
+    this.score      = 0;
+    this.scrollSpeed = cfg.scroll;
+    this.distance   = 0;
+    this.particles  = [];
+    this.trail      = new Trail();
+    this.spikes     = [];
+    this.coins      = [];
+    this.achPopup   = null;
+    this.achTimer   = 0;
+    this.newHS      = false;
+
+    // Player
+    this.px = PLAYER_X;
+    this.py = BASE_H / 2;
+    this.vy = 0;
+    this.pressing = false;
+    this.alive = true;
+    this.deathTimer = 0;
+
+    // Generate initial chunk
+    this._nextSpawnX = BASE_W + 40;
+    for (let i = 0; i < 8; i++) this._spawnChunk();
+  }
+
+  _spawnChunk() {
+    const cfg = DIFF_CONFIGS[difficulty];
+    const x = this._nextSpawnX;
+    // Decide spike pair or open gap
+    const gap = cfg.spikeGap + Math.random() * 40;
+
+    // Bottom spikes cluster
+    const bottomCount = 1 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < bottomCount; i++) {
+      this.spikes.push({ x: x + i * (SPIKE_W + 4), y: GROUND_Y, dir: 'up' });
+    }
+    // Top spikes occasionally
+    if (Math.random() < 0.5) {
+      const topCount = 1 + Math.floor(Math.random() * 2);
+      const topX = x + Math.random() * 40;
+      for (let i = 0; i < topCount; i++) {
+        this.spikes.push({ x: topX + i * (SPIKE_W + 4), y: CEIL_Y, dir: 'down' });
+      }
+    }
+    // Coin
+    if (Math.random() < cfg.coinFreq) {
+      this.coins.push({ x: x + 20, y: CEIL_Y + 40 + Math.random() * (GROUND_Y - CEIL_Y - 80), collected: false });
+    }
+
+    this._nextSpawnX = x + gap;
+  }
+
+  setPressed(v) {
+    if (!this.alive) return;
+    if (v !== this.pressing) {
+      this.pressing = v;
+      playClick();
+    }
+  }
+
+  update() {
+    if (!this.alive) {
+      this.deathTimer++;
+      for (const p of this.particles) p.update();
+      this.particles = this.particles.filter(p => p.life > 0);
+      return;
+    }
+
+    // Speed ramp
+    const cfg = DIFF_CONFIGS[difficulty];
+    this.scrollSpeed = cfg.scroll + this.score * 0.002;
+
+    // Physics
+    this.vy += this.pressing ? GRAVITY_UP : GRAVITY_DOWN;
+    this.vy = Math.max(-MAX_VY, Math.min(MAX_VY, this.vy));
+    this.py += this.vy;
+
+    // Wall collision
+    if (this.py < CEIL_Y + 10) {
+      this.py = CEIL_Y + 10;
+      this.vy = Math.abs(this.vy) * 0.3;
+      this._die();
+      return;
+    }
+    if (this.py > GROUND_Y - 10) {
+      this.py = GROUND_Y - 10;
+      this.vy = -Math.abs(this.vy) * 0.3;
+      this._die();
+      return;
+    }
+
+    // Scroll
+    const dx = this.scrollSpeed;
+    for (const s of this.spikes) s.x -= dx;
+    for (const c of this.coins)  c.x  -= dx;
+    this.distance += dx;
+    this.score = Math.floor(this.distance / 10);
+
+    // Spawn more
+    if (this._nextSpawnX - this.distance / 1 < BASE_W + 200) {
+      // relative position
+      this._nextSpawnX = BASE_W + 60 + Math.random() * 80;
+      for (let i = 0; i < 4; i++) this._spawnChunk();
+    }
+
+    // Cleanup off-screen
+    this.spikes = this.spikes.filter(s => s.x > -SPIKE_W * 2);
+    this.coins  = this.coins.filter(c  => c.x > -20);
+
+    // Coin collection
+    for (const c of this.coins) {
+      if (!c.collected && Math.hypot(this.px - c.x, this.py - c.y) < 16) {
+        c.collected = true;
+        coins++;
+        save('waveCoins', coins);
+        playCoin();
+        for (let i = 0; i < 12; i++) {
+          this.particles.push(new Particle(c.x, c.y, '#ffd700',
+            (Math.random()-0.5)*4, (Math.random()-0.5)*4 - 1,
+            25 + Math.random()*15, 3));
+        }
+      }
+    }
+
+    // Spike collision (point-in-triangle check for player tip)
+    const tip = { x: this.px + 12, y: this.py }; // nose of ship
+    for (const s of this.spikes) {
+      if (this._spikeHit(tip, s)) { this._die(); return; }
+    }
+
+    // Trail
+    this.trail.add(this.px, this.py);
+    this.trail.update();
+
+    // Trail particles
+    if (Math.random() < 0.4) {
+      const skin = SKINS[selectedSkin];
+      this.particles.push(new Particle(
+        this.px - 8 + (Math.random()-0.5)*4,
+        this.py + (Math.random()-0.5)*4,
+        skin.color,
+        -1 - Math.random()*2, (Math.random()-0.5)*1.5,
+        12 + Math.random()*8, 2
+      ));
+    }
+    for (const p of this.particles) p.update();
+    this.particles = this.particles.filter(p => p.life > 0);
+
+    // Achievements
+    const ach = checkAchievements(this);
+    if (ach) {
+      this.achPopup = ach;
+      this.achTimer = 180;
+    }
+    if (this.achTimer > 0) this.achTimer--;
+
+    // High score
+    if (this.score > highScore) {
+      highScore = this.score;
+      save('waveHS', highScore);
+      this.newHS = true;
+    }
+  }
+
+  _spikeHit(pt, spike) {
+    // Triangle: base on ground or ceiling
+    let tx, ty, bx1, by1, bx2, by2;
+    if (spike.dir === 'up') {
+      tx  = spike.x + SPIKE_W / 2; ty  = spike.y - SPIKE_H;
+      bx1 = spike.x;               by1 = spike.y;
+      bx2 = spike.x + SPIKE_W;     by2 = spike.y;
+    } else {
+      tx  = spike.x + SPIKE_W / 2; ty  = spike.y + SPIKE_H;
+      bx1 = spike.x;               by1 = spike.y;
+      bx2 = spike.x + SPIKE_W;     by2 = spike.y;
+    }
+    return pointInTriangle(pt, {x:tx,y:ty}, {x:bx1,y:by1}, {x:bx2,y:by2});
+  }
+
+  _die() {
+    if (!this.alive) return;
+    this.alive = false;
+    playExplosion();
+    shake(12);
+    // Burst
+    const skin = SKINS[selectedSkin];
+    for (let i = 0; i < 40; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const spd = 2 + Math.random() * 5;
+      this.particles.push(new Particle(
+        this.px, this.py, i % 2 === 0 ? skin.color : '#ffffff',
+        Math.cos(ang)*spd, Math.sin(ang)*spd - 2,
+        30 + Math.random()*30, 3 + Math.random()*3
+      ));
+    }
+    state = STATE.DEAD;
+    stopMusic();
+  }
+
+  draw() {
+    const skin = SKINS[selectedSkin];
+
+    // Background
+    drawBackground(this.distance);
+
+    // Walls (floor/ceiling)
+    drawWalls();
+
+    // Grid overlay
+    drawGrid(this.distance);
+
+    ctx.save();
+    applyShake();
+
+    // Spikes
+    for (const s of this.spikes) drawSpike(s);
+
+    // Coins
+    for (const c of this.coins) {
+      if (!c.collected) drawCoin(c.x, c.y, this.distance);
+    }
+
+    // Particles behind player
+    for (const p of this.particles) p.draw(ctx);
+
+    // Trail
+    this.trail.draw(ctx, skin.color);
+
+    // Player ship
+    if (this.alive || this.deathTimer < 15) {
+      const alpha = this.alive ? 1 : Math.max(0, 1 - this.deathTimer / 15);
+      drawPlayer(this.px, this.py, this.vy, skin, alpha);
+    }
+
+    ctx.restore();
+
+    // HUD
+    drawHUD(this.score, this.newHS);
+
+    // Achievement popup
+    if (this.achPopup && this.achTimer > 0) {
+      drawAchPopup(this.achPopup, this.achTimer);
+    }
+  }
+}
+
+// ─── Point-in-triangle ────────────────────────────────────────────────────────
+function sign(p1, p2, p3) {
+  return (p1.x - p3.x) * (p2.y - p3.y) - (p2.x - p3.x) * (p1.y - p3.y);
+}
+function pointInTriangle(pt, v1, v2, v3) {
+  const d1 = sign(pt, v1, v2), d2 = sign(pt, v2, v3), d3 = sign(pt, v3, v1);
+  const hasNeg = (d1 < 0) || (d2 < 0) || (d3 < 0);
+  const hasPos = (d1 > 0) || (d2 > 0) || (d3 > 0);
+  return !(hasNeg && hasPos);
+}
+
+// ─── Drawing Helpers ──────────────────────────────────────────────────────────
+let bgOffset = 0;
+function drawBackground(dist) {
+  // Deep purple gradient
+  const grad = ctx.createLinearGradient(0, 0, 0, BASE_H);
+  grad.addColorStop(0, '#0d0020');
+  grad.addColorStop(1, '#1a0040');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, BASE_W, BASE_H);
+}
+
+function drawGrid(dist) {
+  const GRID = 40;
+  const ox = -(dist % GRID);
+  ctx.save();
+  ctx.strokeStyle = 'rgba(120,0,200,0.18)';
+  ctx.lineWidth = 0.8;
+  for (let x = ox; x < BASE_W + GRID; x += GRID) {
+    ctx.beginPath(); ctx.moveTo(x, CEIL_Y); ctx.lineTo(x, GROUND_Y); ctx.stroke();
+  }
+  for (let y = CEIL_Y; y <= GROUND_Y; y += GRID) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(BASE_W, y); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawWalls() {
+  // Ceiling
+  ctx.save();
+  ctx.fillStyle = '#5500aa';
+  ctx.shadowBlur = 18; ctx.shadowColor = '#aa44ff';
+  ctx.fillRect(0, 0, BASE_W, CEIL_Y);
+  // Ceiling spikes row
+  ctx.fillStyle = '#ffffff';
+  ctx.shadowBlur = 8; ctx.shadowColor = '#cc88ff';
+  for (let x = 0; x < BASE_W; x += SPIKE_W + 4) {
+    ctx.beginPath();
+    ctx.moveTo(x, CEIL_Y);
+    ctx.lineTo(x + SPIKE_W/2, CEIL_Y + 14);
+    ctx.lineTo(x + SPIKE_W, CEIL_Y);
+    ctx.fill();
+  }
+
+  // Floor
+  ctx.fillStyle = '#5500aa';
+  ctx.shadowBlur = 18; ctx.shadowColor = '#aa44ff';
+  ctx.fillRect(0, GROUND_Y, BASE_W, BASE_H - GROUND_Y);
+  ctx.fillStyle = '#ffffff';
+  ctx.shadowBlur = 8; ctx.shadowColor = '#cc88ff';
+  for (let x = 0; x < BASE_W; x += SPIKE_W + 4) {
+    ctx.beginPath();
+    ctx.moveTo(x, GROUND_Y);
+    ctx.lineTo(x + SPIKE_W/2, GROUND_Y - 14);
+    ctx.lineTo(x + SPIKE_W, GROUND_Y);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawSpike(spike) {
+  ctx.save();
+  ctx.fillStyle = '#ffffff';
+  ctx.shadowBlur = 12; ctx.shadowColor = '#cc88ff';
+  ctx.strokeStyle = '#000000';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  if (spike.dir === 'up') {
+    ctx.moveTo(spike.x, spike.y);
+    ctx.lineTo(spike.x + SPIKE_W/2, spike.y - SPIKE_H);
+    ctx.lineTo(spike.x + SPIKE_W, spike.y);
+  } else {
+    ctx.moveTo(spike.x, spike.y);
+    ctx.lineTo(spike.x + SPIKE_W/2, spike.y + SPIKE_H);
+    ctx.lineTo(spike.x + SPIKE_W, spike.y);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawCoin(x, y, dist) {
+  const pulse = 0.85 + 0.15 * Math.sin(dist * 0.05 + x);
+  ctx.save();
+  ctx.shadowBlur = 14; ctx.shadowColor = '#ffd700';
+  ctx.fillStyle = '#ffd700';
+  ctx.globalAlpha = pulse;
+  ctx.beginPath();
+  ctx.arc(x, y, 8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#fff8dc';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.fillStyle = '#fff8dc';
+  ctx.font = 'bold 9px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('$', x, y);
+  ctx.restore();
+}
+
+function drawPlayer(px, py, vy, skin, alpha) {
+  const angle = Math.atan2(vy, 8) * 0.6;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(px, py);
+  ctx.rotate(angle);
+
+  // Outer glow
+  ctx.shadowBlur = 22; ctx.shadowColor = skin.glow;
+
+  // Ship body (diamond/triangle shape)
+  ctx.fillStyle = skin.color;
+  ctx.beginPath();
+  ctx.moveTo(14, 0);       // nose
+  ctx.lineTo(-10, -10);    // top-left
+  ctx.lineTo(-14, 0);      // tail
+  ctx.lineTo(-10, 10);     // bottom-left
+  ctx.closePath();
+  ctx.fill();
+
+  // Inner highlight
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = 'rgba(255,255,255,0.4)';
+  ctx.beginPath();
+  ctx.moveTo(8, 0);
+  ctx.lineTo(-6, -5);
+  ctx.lineTo(-8, 0);
+  ctx.lineTo(-6, 5);
+  ctx.closePath();
+  ctx.fill();
+
+  // Outline
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(14, 0);
+  ctx.lineTo(-10, -10);
+  ctx.lineTo(-14, 0);
+  ctx.lineTo(-10, 10);
+  ctx.closePath();
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function drawHUD(score, newHS) {
+  ctx.save();
+  // Score
+  ctx.fillStyle = '#ffffff';
+  ctx.shadowBlur = 10; ctx.shadowColor = '#aa44ff';
+  ctx.font = 'bold 22px "Segoe UI", sans-serif';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillText(`SCORE  ${score}`, 12, 8);
+
+  // High score
+  ctx.font = '14px "Segoe UI", sans-serif';
+  ctx.fillStyle = newHS ? '#ffd700' : '#cc99ff';
+  ctx.fillText(`BEST  ${highScore}`, 12, 34);
+
+  // Coins
+  ctx.fillStyle = '#ffd700';
+  ctx.shadowColor = '#ffd700';
+  ctx.textAlign = 'right';
+  ctx.font = 'bold 16px "Segoe UI", sans-serif';
+  ctx.fillText(`🪙 ${coins}`, BASE_W - 12, 8);
+
+  // Difficulty badge
+  const diffColor = { easy: '#39ff14', normal: '#00eaff', hard: '#ff4500' }[difficulty];
+  ctx.fillStyle = diffColor;
+  ctx.shadowColor = diffColor;
+  ctx.font = 'bold 13px "Segoe UI", sans-serif';
+  ctx.fillText(difficulty.toUpperCase(), BASE_W - 12, 30);
+
+  ctx.restore();
+}
+
+function drawAchPopup(ach, timer) {
+  const t = Math.min(1, (180 - timer) / 20);
+  const fadeOut = timer < 40 ? timer / 40 : 1;
+  ctx.save();
+  ctx.globalAlpha = t * fadeOut;
+  const w = 260, h = 54, x = (BASE_W - w) / 2, y = 60;
+  ctx.fillStyle = 'rgba(0,0,0,0.75)';
+  ctx.strokeStyle = '#ffd700';
+  ctx.lineWidth = 2;
+  ctx.shadowBlur = 20; ctx.shadowColor = '#ffd700';
+  roundRect(ctx, x, y, w, h, 10);
+  ctx.fill(); ctx.stroke();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = '#ffd700';
+  ctx.font = 'bold 14px "Segoe UI"';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(`🏆 ${ach.label} Unlocked!`, BASE_W/2, y + 18);
+  ctx.fillStyle = '#cccccc';
+  ctx.font = '12px "Segoe UI"';
+  ctx.fillText(ach.desc, BASE_W/2, y + 38);
+  ctx.restore();
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+// ─── Menu Screens ─────────────────────────────────────────────────────────────
+let menuTime = 0;
+let menuBgParticles = [];
+for (let i = 0; i < 40; i++) {
+  menuBgParticles.push({
+    x: Math.random() * BASE_W,
+    y: Math.random() * BASE_H,
+    vx: (Math.random() - 0.5) * 0.6,
+    vy: (Math.random() - 0.5) * 0.6,
+    r: 1 + Math.random() * 2.5,
+    alpha: 0.2 + Math.random() * 0.6,
+  });
+}
+
+function updateMenuBg() {
+  for (const p of menuBgParticles) {
+    p.x += p.vx; p.y += p.vy;
+    if (p.x < 0) p.x = BASE_W;
+    if (p.x > BASE_W) p.x = 0;
+    if (p.y < 0) p.y = BASE_H;
+    if (p.y > BASE_H) p.y = 0;
+  }
+}
+
+function drawMenuBg() {
+  const grad = ctx.createLinearGradient(0, 0, 0, BASE_H);
+  grad.addColorStop(0, '#0d0020');
+  grad.addColorStop(1, '#220050');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, BASE_W, BASE_H);
+
+  // Animated grid
+  const GRID = 44;
+  const ox = -(menuTime * 1.5 % GRID);
+  ctx.strokeStyle = 'rgba(130,0,220,0.2)';
+  ctx.lineWidth = 0.8;
+  for (let x = ox; x < BASE_W + GRID; x += GRID) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, BASE_H); ctx.stroke();
+  }
+  for (let y = 0; y < BASE_H; y += GRID) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(BASE_W, y); ctx.stroke();
+  }
+
+  ctx.save();
+  for (const p of menuBgParticles) {
+    ctx.globalAlpha = p.alpha;
+    ctx.fillStyle = '#aa44ff';
+    ctx.shadowBlur = 8; ctx.shadowColor = '#aa44ff';
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+// Buttons registry per frame
+let buttons = [];
+function registerButton(label, x, y, w, h, color, action, subLabel) {
+  buttons.push({ label, x, y, w, h, color, action, subLabel });
+}
+function drawButtons() {
+  for (const b of buttons) {
+    const hover = false; // no hover on mobile
+    ctx.save();
+    ctx.shadowBlur = 20; ctx.shadowColor = b.color;
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    roundRect(ctx, b.x, b.y, b.w, b.h, 10);
+    ctx.fill();
+    ctx.strokeStyle = b.color;
+    ctx.lineWidth = 2.5;
+    roundRect(ctx, b.x, b.y, b.w, b.h, 10);
+    ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `bold ${b.subLabel ? 17 : 20}px "Segoe UI"`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.shadowBlur = 8; ctx.shadowColor = '#ffffff';
+    ctx.fillText(b.label, b.x + b.w/2, b.y + b.h/2 - (b.subLabel ? 7 : 0));
+    if (b.subLabel) {
+      ctx.font = '12px "Segoe UI"';
+      ctx.fillStyle = '#ccccff';
+      ctx.shadowBlur = 0;
+      ctx.fillText(b.subLabel, b.x + b.w/2, b.y + b.h/2 + 11);
+    }
+    ctx.restore();
+  }
+}
+
+function drawMainMenu() {
+  drawMenuBg();
+
+  // Title
+  const t = menuTime;
+  const pulse = 0.9 + 0.1 * Math.sin(t * 0.05);
+  ctx.save();
+  ctx.textAlign = 'center';
+
+  ctx.font = `bold 54px "Segoe UI", sans-serif`;
+  ctx.fillStyle = '#ffffff';
+  ctx.shadowBlur = 30; ctx.shadowColor = '#aa44ff';
+  ctx.scale(pulse, pulse);
+  ctx.fillText('GEOMETRIC DASH', BASE_W/(2*pulse), 88/pulse);
+  ctx.scale(1/pulse, 1/pulse);
+
+  ctx.font = `bold 22px "Segoe UI"`;
+  ctx.fillStyle = '#cc88ff';
+  ctx.shadowBlur = 14; ctx.shadowColor = '#aa44ff';
+  ctx.fillText('FLYING WAVE CHALLENGE', BASE_W/2, 122);
+  ctx.restore();
+
+  // High score
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.font = '16px "Segoe UI"';
+  ctx.fillStyle = '#ffd700';
+  ctx.shadowBlur = 10; ctx.shadowColor = '#ffd700';
+  ctx.fillText(`🏆 BEST: ${highScore}    🪙 COINS: ${coins}`, BASE_W/2, 158);
+  ctx.restore();
+
+  // Buttons
+  buttons = [];
+  const bw = 200, bh = 50;
+  const cx = BASE_W/2 - bw/2;
+  registerButton('▶  PLAY', cx, 188, bw, bh, '#00eaff', () => { state = STATE.DIFF; });
+  registerButton('🎨  SKINS', cx, 252, bw, bh, '#aa44ff', () => { state = STATE.SKIN; });
+  drawButtons();
+
+  // Controls hint
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.font = '13px "Segoe UI"';
+  ctx.fillStyle = 'rgba(200,170,255,0.7)';
+  ctx.fillText('HOLD to fly up  •  RELEASE to dive  •  SPACE / CLICK / TAP', BASE_W/2, BASE_H - 18);
+  ctx.restore();
+
+  // Achievements count
+  const achCount = Object.keys(achievements).length;
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.font = '13px "Segoe UI"';
+  ctx.fillStyle = 'rgba(200,170,255,0.7)';
+  ctx.fillText(`Achievements: ${achCount} / ${ACH_LIST.length}`, BASE_W/2, BASE_H - 36);
+  ctx.restore();
+}
+
+function drawDiffMenu() {
+  drawMenuBg();
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 34px "Segoe UI"';
+  ctx.fillStyle = '#ffffff';
+  ctx.shadowBlur = 20; ctx.shadowColor = '#aa44ff';
+  ctx.fillText('SELECT DIFFICULTY', BASE_W/2, 80);
+  ctx.restore();
+
+  buttons = [];
+  const bw = 200, bh = 54;
+  const cx = BASE_W/2 - bw/2;
+  registerButton('EASY', cx, 120, bw, bh, '#39ff14', () => { difficulty='easy'; startGame(); }, 'Relaxed speed');
+  registerButton('NORMAL', cx, 192, bw, bh, '#00eaff', () => { difficulty='normal'; startGame(); }, 'Classic challenge');
+  registerButton('HARD', cx, 264, bw, bh, '#ff4500', () => { difficulty='hard'; startGame(); }, 'Maximum intensity');
+  registerButton('◀  BACK', cx, 340, bw, 40, '#aa44ff', () => { state = STATE.MENU; });
+  drawButtons();
+}
+
+function drawSkinMenu() {
+  drawMenuBg();
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 34px "Segoe UI"';
+  ctx.fillStyle = '#ffffff';
+  ctx.shadowBlur = 20; ctx.shadowColor = '#aa44ff';
+  ctx.fillText('SHIP SKINS', BASE_W/2, 60);
+  ctx.fillStyle = '#ffd700';
+  ctx.shadowColor = '#ffd700';
+  ctx.font = 'bold 16px "Segoe UI"';
+  ctx.fillText(`🪙 ${coins} coins`, BASE_W/2, 90);
+  ctx.restore();
+
+  buttons = [];
+  const cols = 3, rows = Math.ceil(SKINS.length / cols);
+  const sw = 210, sh = 100, pad = 20;
+  const totalW = cols * sw + (cols-1) * pad;
+  const startX = (BASE_W - totalW) / 2;
+  const startY = 110;
+
+  SKINS.forEach((skin, i) => {
+    const col = i % cols, row = Math.floor(i / cols);
+    const bx = startX + col * (sw + pad);
+    const by = startY + row * (sh + pad);
+    const owned = unlockedSkins.includes(i);
+    const selected = selectedSkin === i;
+
+    ctx.save();
+    ctx.shadowBlur = selected ? 24 : 8;
+    ctx.shadowColor = skin.glow;
+    ctx.strokeStyle = selected ? skin.color : 'rgba(255,255,255,0.3)';
+    ctx.lineWidth = selected ? 3 : 1.5;
+    ctx.fillStyle = selected ? 'rgba(0,0,0,0.7)' : 'rgba(0,0,0,0.45)';
+    roundRect(ctx, bx, by, sw, sh, 10);
+    ctx.fill(); ctx.stroke();
+
+    // Mini ship preview
+    ctx.save();
+    ctx.translate(bx + 36, by + sh/2);
+    ctx.shadowBlur = 16; ctx.shadowColor = skin.glow;
+    ctx.fillStyle = skin.color;
+    ctx.beginPath();
+    ctx.moveTo(12, 0); ctx.lineTo(-8, -8); ctx.lineTo(-12, 0); ctx.lineTo(-8, 8);
+    ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.2; ctx.stroke();
+    ctx.restore();
+
+    // Labels
+    ctx.fillStyle = '#ffffff';
+    ctx.shadowBlur = 0;
+    ctx.font = `bold 15px "Segoe UI"`;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(skin.name, bx + 62, by + sh/2 - 12);
+    ctx.font = '12px "Segoe UI"';
+    ctx.fillStyle = owned ? '#99ff99' : '#ffcc44';
+    ctx.fillText(owned ? (selected ? '✔ Equipped' : 'Owned') : `🪙 ${skin.cost}`, bx + 62, by + sh/2 + 10);
+    ctx.restore();
+
+    if (!owned) {
+      buttons.push({ label: 'BUY', x: bx + sw - 60, y: by + sh/2 - 14, w: 52, h: 28,
+        color: '#ffd700', subLabel: null,
+        action: () => {
+          if (coins >= skin.cost) {
+            coins -= skin.cost; unlockedSkins.push(i); selectedSkin = i;
+            save('waveCoins', coins); save('waveSkins', unlockedSkins); save('waveSkin', selectedSkin);
+          }
+        }
+      });
+    } else {
+      buttons.push({ label: selected ? 'ON' : 'USE', x: bx + sw - 60, y: by + sh/2 - 14, w: 52, h: 28,
+        color: selected ? skin.color : '#aaaaaa', subLabel: null,
+        action: () => { selectedSkin = i; save('waveSkin', i); }
+      });
+    }
+  });
+
+  drawButtons();
+
+  buttons.push({ label: '◀  BACK', x: BASE_W/2-100, y: BASE_H - 50, w: 200, h: 38,
+    color: '#aa44ff', subLabel: null, action: () => { state = STATE.MENU; }
+  });
+  // Draw back button directly
+  const bb = buttons[buttons.length-1];
+  ctx.save();
+  ctx.shadowBlur = 12; ctx.shadowColor = bb.color;
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  roundRect(ctx, bb.x, bb.y, bb.w, bb.h, 10);
+  ctx.fill();
+  ctx.strokeStyle = bb.color; ctx.lineWidth = 2;
+  roundRect(ctx, bb.x, bb.y, bb.w, bb.h, 10);
+  ctx.stroke();
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 16px "Segoe UI"';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(bb.label, bb.x + bb.w/2, bb.y + bb.h/2);
+  ctx.restore();
+}
+
+function drawPause() {
+  // dim overlay
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(0, 0, BASE_W, BASE_H);
+  ctx.restore();
+
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 40px "Segoe UI"';
+  ctx.fillStyle = '#ffffff';
+  ctx.shadowBlur = 20; ctx.shadowColor = '#aa44ff';
+  ctx.fillText('PAUSED', BASE_W/2, BASE_H/2 - 60);
+  ctx.restore();
+
+  buttons = [];
+  const bw = 200, bh = 48;
+  const cx = BASE_W/2 - bw/2;
+  registerButton('▶  RESUME', cx, BASE_H/2 - 20, bw, bh, '#00eaff', () => {
+    state = STATE.PLAY; startMusic();
+  });
+  registerButton('↺  RESTART', cx, BASE_H/2 + 42, bw, bh, '#aa44ff', () => {
+    startGame();
+  });
+  registerButton('⌂  MENU', cx, BASE_H/2 + 104, bw, bh, '#ff4500', () => {
+    state = STATE.MENU; stopMusic();
+  });
+  drawButtons();
+}
+
+function drawDeadScreen() {
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(0, 0, BASE_W, BASE_H);
+  ctx.restore();
+
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 48px "Segoe UI"';
+  ctx.fillStyle = '#ff4444';
+  ctx.shadowBlur = 24; ctx.shadowColor = '#ff0000';
+  ctx.fillText('GAME OVER', BASE_W/2, BASE_H/2 - 90);
+
+  ctx.font = 'bold 24px "Segoe UI"';
+  ctx.fillStyle = '#ffffff';
+  ctx.shadowBlur = 10; ctx.shadowColor = '#aa44ff';
+  ctx.fillText(`Score: ${game.score}`, BASE_W/2, BASE_H/2 - 46);
+
+  if (game.newHS) {
+    ctx.font = 'bold 18px "Segoe UI"';
+    ctx.fillStyle = '#ffd700';
+    ctx.shadowColor = '#ffd700';
+    ctx.fillText('🏆 NEW HIGH SCORE!', BASE_W/2, BASE_H/2 - 16);
+  } else {
+    ctx.font = '16px "Segoe UI"';
+    ctx.fillStyle = '#cc99ff';
+    ctx.fillText(`Best: ${highScore}`, BASE_W/2, BASE_H/2 - 16);
+  }
+  ctx.restore();
+
+  buttons = [];
+  const bw = 200, bh = 48;
+  const cx = BASE_W/2 - bw/2;
+  registerButton('↺  PLAY AGAIN', cx, BASE_H/2 + 14, bw, bh, '#00eaff', () => startGame());
+  registerButton('⌂  MENU', cx, BASE_H/2 + 76, bw, bh, '#aa44ff', () => { state = STATE.MENU; });
+  drawButtons();
+}
+
+// ─── Click handling ───────────────────────────────────────────────────────────
+function handlePress(cx, cy, down) {
+  ensureAudio();
+  const lx = cx / scale, ly = cy / scale;
+
+  if (state === STATE.PLAY) {
+    game.setPressed(down);
+    return;
+  }
+
+  if (!down) return; // only trigger buttons on mousedown/touchstart for menus
+
+  for (const b of buttons) {
+    if (lx >= b.x && lx <= b.x + b.w && ly >= b.y && ly <= b.y + b.h) {
+      playClick();
+      b.action();
+      return;
+    }
+  }
+}
+
+canvas.addEventListener('mousedown', e => {
+  handlePress(e.offsetX, e.offsetY, true);
+});
+canvas.addEventListener('mouseup', e => {
+  if (state === STATE.PLAY) game.setPressed(false);
+});
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const r = canvas.getBoundingClientRect();
+  const t = e.changedTouches[0];
+  handlePress(t.clientX - r.left, t.clientY - r.top, true);
+}, { passive: false });
+canvas.addEventListener('touchend', e => {
+  e.preventDefault();
+  if (state === STATE.PLAY) game.setPressed(false);
+}, { passive: false });
+
+window.addEventListener('keydown', e => {
+  if (e.code === 'Space' || e.code === 'ArrowUp') {
+    e.preventDefault();
+    if (state === STATE.PLAY) { game.setPressed(true); return; }
+  }
+  if (e.code === 'Escape' || e.code === 'KeyP') {
+    if (state === STATE.PLAY) { state = STATE.PAUSE; stopMusic(); }
+    else if (state === STATE.PAUSE) { state = STATE.PLAY; startMusic(); }
+  }
+});
+window.addEventListener('keyup', e => {
+  if (e.code === 'Space' || e.code === 'ArrowUp') {
+    e.preventDefault();
+    if (state === STATE.PLAY) game.setPressed(false);
+  }
+});
+
+// ─── Game control ─────────────────────────────────────────────────────────────
+let game = null;
+function startGame() {
+  game = new Game();
+  state = STATE.PLAY;
+  startMusic();
+}
+
+// ─── Main Loop ────────────────────────────────────────────────────────────────
+let lastTime = 0;
+function loop(ts) {
+  requestAnimationFrame(loop);
+  const dt = ts - lastTime;
+  lastTime = ts;
+  if (dt > 100) return; // tab was hidden
+
+  buttons = []; // reset button registry each frame
+  menuTime++;
+  updateMenuBg();
+
+  ctx.clearRect(0, 0, BASE_W, BASE_H);
+
+  switch(state) {
+    case STATE.MENU:
+      drawMainMenu();
+      break;
+    case STATE.DIFF:
+      drawDiffMenu();
+      break;
+    case STATE.SKIN:
+      drawSkinMenu();
+      break;
+    case STATE.PLAY:
+      game.update();
+      game.draw();
+      // Pause hint
+      ctx.save();
+      ctx.font = '12px "Segoe UI"';
+      ctx.fillStyle = 'rgba(180,140,255,0.5)';
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'top';
+      ctx.fillText('ESC / P = pause', BASE_W - 10, 48);
+      ctx.restore();
+      break;
+    case STATE.PAUSE:
+      if (game) game.draw();
+      drawPause();
+      break;
+    case STATE.DEAD:
+      if (game) { game.update(); game.draw(); }
+      drawDeadScreen();
+      break;
+  }
+}
+
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
