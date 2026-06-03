@@ -198,7 +198,10 @@ function makeSection(startX,sTopY,sBotY,score){
   function build(cyFn,hgFn){
     for(let i=0;i<nc;i++){
       const t=nc<=1?0:i/(nc-1);
-      const hg=clamp(hgFn(t),minHG,maxHG);
+      // Allow hg to start from curHG (even if > maxHG) so transition from
+      // wide seed is smooth — clamp floor only, not ceiling at t=0
+      const rawHG=hgFn(t);
+      const hg=Math.max(minHG, i===0 ? Math.max(rawHG,curHG) : rawHG);
       const cy=clamp(cyFn(t),WALL_PAD+hg+6,H-WALL_PAD-hg-6);
       const tY=clamp(cy-hg,WALL_PAD,H-WALL_PAD-hg*2);
       nodes.push({x:startX+t*secLen,topY:tY,botY:tY+hg*2});
@@ -289,35 +292,39 @@ class Particle{
 }
 
 // ── Trail ─────────────────────────────────────────────────────────────────────
+// Stores WORLD x so trail spreads left behind the ship as the world scrolls,
+// giving the diagonal zigzag appearance of GD wave mode.
 class Trail{
   constructor(){this.pts=[];}
-  add(x,y){this.pts.push({x,y});if(this.pts.length>55)this.pts.shift();}
-  draw(skin){
+  // wx = world distance at this frame, y = player screen y
+  add(wx,y){this.pts.push({wx,y});if(this.pts.length>60)this.pts.shift();}
+  draw(skin,off){
+    // off = this.dist - PX  →  screenX = worldX - off
     if(this.pts.length<2)return;
+    const sp=this.pts.map(p=>({x:p.wx-off, y:p.y}));
     ctx.save();
     ctx.lineCap='round';ctx.lineJoin='round';
 
-    // Draw as one continuous path per pass — much cheaper and smoother
-    // Pass 1: wide soft glow halo
+    // Pass 1: wide outer glow — shows the diagonal zigzag path
     ctx.beginPath();
-    ctx.moveTo(this.pts[0].x,this.pts[0].y);
-    for(let i=1;i<this.pts.length;i++) ctx.lineTo(this.pts[i].x,this.pts[i].y);
-    ctx.strokeStyle=skin.glow; ctx.globalAlpha=0.30;
-    ctx.lineWidth=22; ctx.shadowBlur=0; ctx.stroke();
+    ctx.moveTo(sp[0].x,sp[0].y);
+    for(let i=1;i<sp.length;i++) ctx.lineTo(sp[i].x,sp[i].y);
+    ctx.strokeStyle=skin.glow; ctx.globalAlpha=0.28;
+    ctx.lineWidth=24; ctx.shadowBlur=0; ctx.stroke();
 
     // Pass 2: mid glow
     ctx.beginPath();
-    ctx.moveTo(this.pts[0].x,this.pts[0].y);
-    for(let i=1;i<this.pts.length;i++) ctx.lineTo(this.pts[i].x,this.pts[i].y);
-    ctx.strokeStyle=skin.primary; ctx.globalAlpha=0.70;
-    ctx.lineWidth=7; ctx.shadowBlur=14; ctx.shadowColor=skin.glow; ctx.stroke();
+    ctx.moveTo(sp[0].x,sp[0].y);
+    for(let i=1;i<sp.length;i++) ctx.lineTo(sp[i].x,sp[i].y);
+    ctx.strokeStyle=skin.primary; ctx.globalAlpha=0.75;
+    ctx.lineWidth=6; ctx.shadowBlur=16; ctx.shadowColor=skin.glow; ctx.stroke();
 
-    // Pass 3: bright white core line
+    // Pass 3: bright white core
     ctx.beginPath();
-    ctx.moveTo(this.pts[0].x,this.pts[0].y);
-    for(let i=1;i<this.pts.length;i++) ctx.lineTo(this.pts[i].x,this.pts[i].y);
-    ctx.strokeStyle='#ffffff'; ctx.globalAlpha=0.90;
-    ctx.lineWidth=2.5; ctx.shadowBlur=8; ctx.shadowColor='#ffffff'; ctx.stroke();
+    ctx.moveTo(sp[0].x,sp[0].y);
+    for(let i=1;i<sp.length;i++) ctx.lineTo(sp[i].x,sp[i].y);
+    ctx.strokeStyle='#ffffff'; ctx.globalAlpha=0.95;
+    ctx.lineWidth=2; ctx.shadowBlur=6; ctx.shadowColor='#ffffff'; ctx.stroke();
 
     ctx.restore();
   }
@@ -655,8 +662,8 @@ class Game{
       if(this.py-PR<topY+TOOTH_H||this.py+PR>botY-TOOTH_H){this._die();return;}
     }
 
-    // Trail + trail particles
-    this.trail.add(PX,this.py);
+    // Trail — record world x so it spreads left as a diagonal zigzag
+    this.trail.add(this.dist,this.py);
     const skin=SKINS[selSkin];
     if(Math.random()<0.45)
       this.parts.push(new Particle(
@@ -717,8 +724,8 @@ class Game{
     for(const p of this.parts)p.draw();
     ctx.restore();
 
-    // Trail
-    this.trail.draw(SKINS[selSkin]);
+    // Trail — pass offset so world coords convert to screen coords
+    this.trail.draw(SKINS[selSkin],off);
 
     // Player
     if(this.alive||this.deathTimer<16){
